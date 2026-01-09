@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+:root {
+  /* Primary - Excalidraw purple */
+  --color-primary: #6965db;
+  --color-primary-hover: #5b57c9;
+  --color-primary-light: #e8e7fc;
+  
+  /* Backgrounds - warm whites */
+  --color-canvas-bg: #ffffff;
+  --color-panel-bg: #fafafa;
+  --color-surface: #f5f5f5;
+  
+  /* Text */
+  --color-text-primary: #1b1b1f;
+  --color-text-secondary: #5c5c6d;
+  --color-text-tertiary: #8e8e9a;
+  
+  /* Status colors */
+  --color-success: #20b46a;
+  --color-warning: #f0a04b;
+  --color-error: #e55c5c;
+  
+  /* Difficulty badges */
+  --color-easy: #20b46a;
+  --color-medium: #f0a04b;
+  --color-hard: #e55c5c;
+  --color-premium: #6965db;
+  
+  /* Borders and shadows - softer */
+  --color-border: #e5e5e9;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+  
+  /* Border radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+  
+  /* Fonts */
+  --font-sans: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+[data-theme="dark"] {
+  --color-canvas-bg: #121217;
+  --color-panel-bg: #1e1e24;
+  --color-surface: #27272e;
+  --color-text-primary: #f5f5f7;
+  --color-text-secondary: #a1a1aa;
+  --color-text-tertiary: #71717a;
+  --color-border: #3f3f46;
+  --color-primary-light: #2d2b5a;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+@theme inline {
+  --color-background: var(--color-canvas-bg);
+  --color-foreground: var(--color-text-primary);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-canvas-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Focus styles */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Selection */
+::selection {
+  background: var(--color-primary-light);
+  color: var(--color-text-primary);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
