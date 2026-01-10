@@ -1,15 +1,17 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Code2, Eye, EyeOff } from "lucide-react";
 import { Button, Input } from "@/components/ui";
+import { OAuthButtons, AuthDivider } from "@/components/auth";
 import { supabase } from "@/lib/supabase/client";
 import { useAuthStore } from "@/stores/authStore";
 
 export function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, isLoading: authLoading } = useAuthStore();
   
   const [email, setEmail] = useState("");
@@ -17,6 +19,22 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Check for OAuth errors in URL
+  useEffect(() => {
+    const errorParam = searchParams.get("error");
+    const errorDescription = searchParams.get("error_description");
+    
+    if (errorParam) {
+      if (errorParam === "access_denied") {
+        setError("Authentication was cancelled.");
+      } else if (errorDescription) {
+        setError(errorDescription);
+      } else {
+        setError("Authentication failed. Please try again.");
+      }
+    }
+  }, [searchParams]);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -80,6 +98,11 @@ export function LoginForm() {
             <p className="text-[var(--color-text-secondary)] text-center mb-8">
               Sign in to continue your SQL journey
             </p>
+
+            {/* OAuth Buttons */}
+            <OAuthButtons />
+
+            <AuthDivider text="or continue with email" />
 
             <form onSubmit={handleSubmit} className="space-y-5">
               {error && (

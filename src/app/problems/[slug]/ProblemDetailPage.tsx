@@ -21,12 +21,15 @@ const difficultyVariants = {
 export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
   const { slug } = use(params);
   const router = useRouter();
-  const { user, isLoading: authLoading, isPremium } = useAuthStore();
+  const { user, isLoading: authLoading } = useAuthStore();
   
-  const { data: problem, isLoading, error } = useProblem(slug);
+  // Only fetch problem data if user is authenticated
+  const { data: problem, isLoading, error } = useProblem(slug, {
+    enabled: !authLoading && !!user,
+  });
 
-  // Show loading state
-  if (isLoading || authLoading) {
+  // Show loading while auth is initializing
+  if (authLoading) {
     return (
       <div className="min-h-screen flex flex-col bg-[var(--color-canvas-bg)]">
         <TopNav />
@@ -37,7 +40,7 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
     );
   }
 
-  // Handle auth required
+  // Handle auth required - show immediately if not logged in
   if (!user) {
     return (
       <div className="min-h-screen flex flex-col bg-[var(--color-canvas-bg)]">
@@ -60,6 +63,18 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
               </Button>
             </div>
           </div>
+        </main>
+      </div>
+    );
+  }
+
+  // Show loading while fetching problem
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex flex-col bg-[var(--color-canvas-bg)]">
+        <TopNav />
+        <main className="flex-1 flex items-center justify-center">
+          <div className="h-8 w-8 border-4 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin" />
         </main>
       </div>
     );
