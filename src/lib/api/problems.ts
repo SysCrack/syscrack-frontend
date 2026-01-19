@@ -21,13 +21,28 @@ export interface FetchProblemsParams {
 }
 
 /**
+ * Mock problems for development when backend is unavailable
+ */
+const MOCK_PROBLEMS: ProblemListItem[] = [
+  { id: 1, title: "Design a URL Shortener", slug: "url-shortener", difficulty: "medium", topic: "System Design", is_premium_only: false },
+  { id: 2, title: "Design Twitter Feed", slug: "twitter-feed", difficulty: "hard", topic: "System Design", is_premium_only: false },
+  { id: 3, title: "Design a Rate Limiter", slug: "rate-limiter", difficulty: "medium", topic: "System Design", is_premium_only: false },
+  { id: 4, title: "Design a Chat System", slug: "chat-system", difficulty: "hard", topic: "System Design", is_premium_only: true },
+  { id: 5, title: "Design a Key-Value Store", slug: "key-value-store", difficulty: "hard", topic: "System Design", is_premium_only: false },
+  { id: 6, title: "Design a Notification Service", slug: "notification-service", difficulty: "medium", topic: "System Design", is_premium_only: false },
+  { id: 7, title: "Design a Search Autocomplete", slug: "search-autocomplete", difficulty: "medium", topic: "System Design", is_premium_only: true },
+  { id: 8, title: "Design a Video Streaming Service", slug: "video-streaming", difficulty: "hard", topic: "System Design", is_premium_only: true },
+];
+
+/**
  * Fetch all problems (public endpoint, no auth required)
+ * Falls back to mock data if API is unavailable
  */
 export async function fetchProblems(
   params?: FetchProblemsParams
 ): Promise<ProblemListItem[]> {
   const searchParams = new URLSearchParams();
-  
+
   if (params?.difficulty) {
     searchParams.set("difficulty", params.difficulty);
   }
@@ -37,8 +52,18 @@ export async function fetchProblems(
 
   const query = searchParams.toString();
   const endpoint = `/problems${query ? `?${query}` : ""}`;
-  
-  return apiFetch<ProblemListItem[]>(endpoint, {}, false);
+
+  try {
+    return await apiFetch<ProblemListItem[]>(endpoint, {}, false);
+  } catch (error) {
+    console.warn("API unavailable, using mock problems:", error);
+    // Filter mock data based on params
+    let filtered = MOCK_PROBLEMS;
+    if (params?.difficulty) {
+      filtered = filtered.filter(p => p.difficulty === params.difficulty);
+    }
+    return filtered;
+  }
 }
 
 /**

@@ -3,6 +3,7 @@
 import { useCallback, useRef, forwardRef, useImperativeHandle, useState, useEffect } from 'react';
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
+import { useUIStore } from '@/stores/uiStore';
 
 // Use inline type extraction from Excalidraw's API
 type ExcalidrawImperativeAPI = Parameters<NonNullable<Parameters<typeof Excalidraw>[0]['excalidrawAPI']>>[0];
@@ -23,6 +24,7 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
     function SystemDesignCanvas({ problemId }, ref) {
         const excalidrawAPIRef = useRef<ExcalidrawImperativeAPI | null>(null);
         const [isReady, setIsReady] = useState(false);
+        const theme = useUIStore((state) => state.theme);
 
         // Delay mounting Excalidraw slightly
         useEffect(() => {
@@ -61,21 +63,28 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
 
         if (!isReady) {
             return (
-                <div className="flex items-center justify-center h-full bg-gray-100">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div className="flex items-center justify-center h-full bg-[var(--color-canvas-bg)]">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--color-primary)]"></div>
                 </div>
             );
         }
 
+        // Set background color based on theme
+        const backgroundColor = theme === 'dark' ? '#1a1a2e' : '#f8f9fa';
+
         return (
-            <div className="w-full h-full">
+            <div
+                className="w-full h-full relative overflow-hidden"
+                style={{ transform: 'translate3d(0, 0, 0)' }}
+            >
                 <Excalidraw
                     excalidrawAPI={handleExcalidrawMount}
                     onChange={handleChange}
                     onPointerUpdate={handlePointerUpdate}
+                    theme={theme}
                     initialData={{
                         appState: {
-                            viewBackgroundColor: '#f8f9fa',
+                            viewBackgroundColor: backgroundColor,
                             currentItemRoughness: 1,
                         },
                     }}

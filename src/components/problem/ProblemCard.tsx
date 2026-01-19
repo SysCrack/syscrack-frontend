@@ -21,8 +21,9 @@ export function ProblemCard({ problem }: ProblemCardProps) {
   const { isPremium, user } = useAuthStore();
   const isLocked = problem.is_premium_only && !isPremium;
 
+  // Link to system design canvas
   return (
-    <Link href={`/problems/${problem.slug}`}>
+    <Link href={`/design/${problem.slug}`}>
       <Card variant="interactive" className="h-full relative group">
         {/* Premium lock overlay */}
         {isLocked && (
