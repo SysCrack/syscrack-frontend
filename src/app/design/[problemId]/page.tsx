@@ -3,8 +3,10 @@
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Info, MessageSquare, Code2, Sun, Moon, User, LogOut } from 'lucide-react';
+import { InspectorPanel } from '@/components/inspector/InspectorPanel';
+import type { SystemDesignCanvasHandle } from '@/components/canvas/SystemDesignCanvas';
 import { ProblemPanel } from '@/components/problem/ProblemPanel';
 import { ComponentPalette } from '@/components/palette/ComponentPalette';
 import { getProblemBySlug } from '@/lib/data/mockProblems';
@@ -61,6 +63,8 @@ function SaveStatus() {
     );
 }
 
+
+
 export default function DesignPage() {
     const params = useParams();
     const problemId = params.problemId as string;
@@ -69,14 +73,50 @@ export default function DesignPage() {
     const toggleTheme = useUIStore((state) => state.toggleTheme);
     const { user, signOut } = useAuthStore();
 
+    // Canvas State
+    const [selectedElement, setSelectedElement] = useState<any>(null);
+    const canvasRef = useRef<SystemDesignCanvasHandle>(null);
+
     // Get problem data (mock for now, will be API call later)
     const problem = getProblemBySlug(problemId);
 
+    const handleSelectionChange = useCallback((element: any) => {
+        setSelectedElement(element);
+    }, []);
+
+    const handleConfigUpdate = useCallback((elementId: string, newConfig: Record<string, unknown>) => {
+        const api = canvasRef.current?.getExcalidrawAPI();
+        if (!api) return;
+
+        const elements = api.getSceneElements();
+        const element = elements.find(el => el.id === elementId);
+
+        if (element) {
+            // Update customData
+            const updatedElement = {
+                ...element,
+                customData: {
+                    ...element.customData,
+                    componentConfig: newConfig
+                }
+            };
+
+            // Push update to scene
+            // Note: Excalidraw updates by ID
+            api.updateScene({
+                elements: elements.map(el => el.id === elementId ? updatedElement : el)
+            });
+
+            // Update local state to reflect changes immediately in Inspector if needed
+            setSelectedElement(updatedElement);
+        }
+    }, []);
+
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-[var(--color-canvas-bg)]">
-            {/* Header - Single bar with all controls */}
+            {/* Header ... */}
             <header className="h-14 border-b border-[var(--color-border)] bg-[var(--color-panel-bg)] flex items-center px-4 justify-between flex-shrink-0">
-                {/* Left: Logo and design controls */}
+                {/* ... existing header content ... */}
                 <div className="flex items-center gap-4">
                     {/* Syscrack Logo */}
                     <Link
@@ -181,15 +221,21 @@ export default function DesignPage() {
                 <main className="flex-1 relative overflow-hidden isolate">
                     {/* Excalidraw Canvas - contained with isolation */}
                     <div className="absolute inset-0 overflow-hidden">
-                        <SystemDesignCanvas problemId={problemId} />
+                        <SystemDesignCanvas
+                            ref={canvasRef}
+                            problemId={problemId}
+                            onSelectionChange={handleSelectionChange}
+                        />
                     </div>
 
-                    {/* Feedback Button - Bottom Left */}
-                    <button className="absolute bottom-16 left-4 z-50 flex items-center gap-2 px-4 py-2 bg-[var(--color-panel-bg)] border border-[var(--color-border)] rounded-lg shadow-sm text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)] transition-colors">
-                        <MessageSquare className="h-4 w-4" />
-                        Feedback
-                    </button>
 
+
+                    {/* Inspector Panel */}
+                    <InspectorPanel
+                        element={selectedElement}
+                        onUpdate={handleConfigUpdate}
+                        onClose={() => setSelectedElement(null)}
+                    />
 
                     {/* Submit/Run Button - Bottom Right */}
                     <div className="absolute bottom-16 right-4 z-50">

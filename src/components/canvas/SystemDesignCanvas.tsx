@@ -11,11 +11,13 @@ import * as designsApi from '@/lib/api/designs';
 import { parseExcalidrawScene } from '@/lib/utils/sceneParser';
 
 // Use inline type extraction from Excalidraw's API
+// Use inline type extraction from Excalidraw's API
 type ExcalidrawImperativeAPI = Parameters<NonNullable<Parameters<typeof Excalidraw>[0]['excalidrawAPI']>>[0];
-type ExcalidrawElement = ReturnType<ExcalidrawImperativeAPI['getSceneElements']>[number];
+export type ExcalidrawElement = ReturnType<ExcalidrawImperativeAPI['getSceneElements']>[number];
 
 interface SystemDesignCanvasProps {
     problemId: string;
+    onSelectionChange?: (element: ExcalidrawElement | null) => void;
 }
 
 export interface SystemDesignCanvasHandle {
@@ -26,7 +28,7 @@ export interface SystemDesignCanvasHandle {
 }
 
 const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanvasProps>(
-    function SystemDesignCanvas({ problemId }, ref) {
+    function SystemDesignCanvas({ problemId, onSelectionChange }, ref) {
         const excalidrawAPIRef = useRef<ExcalidrawImperativeAPI | null>(null);
         const containerRef = useRef<HTMLDivElement>(null);
         const [isReady, setIsReady] = useState(false);
@@ -127,11 +129,24 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                 }
                 markSaved();
             } catch (err) {
-                console.error('Save failed:', err);
-                setSaveError(err instanceof Error ? err.message : 'Save failed');
+                const message = err instanceof Error ? err.message : 'Save failed';
+                // Don't spam console if backend is down
+                if (message !== 'Failed to fetch') {
+                    console.error('Save failed:', err);
+                }
+                setSaveError(message === 'Failed to fetch' ? 'Backend Unavailable' : message);
             }
         }, [problemId, setDesignId, startSaving, markSaved, setSaveError]);
 
+
+
+        // Track previous selection to avoid unnecessary updates
+        const prevSelectionIdRef = useRef<string | null>(null);
+
+        // Palette state
+        const [paletteCollapsed, setPaletteCollapsed] = useState(false);
+
+        // ... existing handleChange ...
         const handleChange = useCallback((elements: readonly ExcalidrawElement[], appState: any) => {
             // Auto-save logic
             markDirty();
@@ -140,7 +155,37 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
             }
             saveTimeoutRef.current = setTimeout(triggerSave, 2000);
 
-        }, [markDirty, triggerSave]);
+            // Handle Selection Change
+            const selectedIds = Object.keys(appState.selectedElementIds || {});
+            const singleSelectedId = selectedIds.length === 1 ? selectedIds[0] : null;
+
+            // Only notify if selection actually changed
+            if (singleSelectedId !== prevSelectionIdRef.current) {
+                prevSelectionIdRef.current = singleSelectedId;
+
+                // Auto-collapse palette when selecting a component (inspector opens)
+                if (singleSelectedId) {
+                    setPaletteCollapsed(true);
+                }
+
+                if (onSelectionChange) {
+                    if (singleSelectedId) {
+                        const el = elements.find(e => e.id === singleSelectedId);
+                        onSelectionChange(el || null);
+                    } else {
+                        onSelectionChange(null);
+                    }
+                }
+            }
+        }, [markDirty, triggerSave, onSelectionChange]);
+
+        // ... (lines 169-230)
+
+        {/* Component Palette */ }
+        <ComponentPalette
+            collapsed={paletteCollapsed}
+            onToggle={setPaletteCollapsed}
+        />
 
         const handlePointerUpdate = useCallback(() => { }, []);
 
@@ -205,7 +250,10 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                 `}</style>
 
                 {/* Component Palette */}
-                <ComponentPalette />
+                <ComponentPalette
+                    collapsed={paletteCollapsed}
+                    onToggle={setPaletteCollapsed}
+                />
 
                 {/* Excalidraw Canvas */}
                 <Excalidraw
