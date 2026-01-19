@@ -1,0 +1,31 @@
+On branch feature/system-design-canvas-part-2
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   frontend_backend_design.md
+	new file:   frontend_implementation_guide.md
+	modified:   next.config.ts
+	modified:   package-lock.json
+	modified:   package.json
+	new file:   src/app/design/[problemId]/page.tsx
+	new file:   src/components/canvas/.gitkeep
+	new file:   src/components/canvas/SystemDesignCanvas.tsx
+	new file:   src/components/inspector/.gitkeep
+	new file:   src/components/palette/.gitkeep
+	new file:   src/components/simulation/.gitkeep
+	new file:   src/hooks/.gitkeep
+	new file:   src/lib/store/.gitkeep
+	new file:   src/lib/types/components.ts
+	modified:   tsconfig.json
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   .gitignore
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	git_log_debug.txt
+	git_status_debug.txt
+	git_status_utf8.txt
+	syscrack-frontend/
+
