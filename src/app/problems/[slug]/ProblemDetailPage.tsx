@@ -37,11 +37,27 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
   const { slug } = use(params);
   const router = useRouter();
   const { user, isLoading: authLoading } = useAuthStore();
-  
+
   // Fetch problem data
-  const { data: problem, isLoading, error } = useProblem(slug, {
+  const { data: apiProblem, isLoading, error } = useProblem(slug, {
     enabled: !authLoading && !!user,
   });
+
+  // Transform API data to UI model
+  const problem = apiProblem ? {
+    ...apiProblem,
+    // Map API requirements to UI format
+    // Fallback to empty arrays if data is missing or not in expected format
+    example: (apiProblem.requirements?.example as any) || { input: "", output: "" },
+    functionalRequirements: (apiProblem.requirements?.functional as any[])?.map(
+      r => typeof r === 'string' ? { text: r } : r
+    ) || [],
+    nonfunctionalRequirements: (apiProblem.requirements?.non_functional as any[])?.map(
+      r => typeof r === 'string' ? { text: r } : r
+    ) || [],
+    assumptions: (apiProblem.requirements?.assumptions as string[]) || [],
+    estimatedUsage: (apiProblem.requirements?.estimated_usage as any[]) || [],
+  } : null;
 
   // Submission state
   const submitMutation = useSubmitSolution();
@@ -58,7 +74,7 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
           problemId: problem.id,
           code,
         });
-        
+
         // Transform the result to match our expected type
         const submissionResult: SubmissionResult = {
           id: result.id,
@@ -67,7 +83,7 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
           execution_time_ms: result.execution_time_ms,
           feedback: result.feedback || { messages: [], issues: [] },
         };
-        
+
         setLastResult(submissionResult);
         setIsResultsOpen(true);
       } catch (err) {
@@ -174,12 +190,12 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
   return (
     <div className="h-screen flex flex-col bg-[var(--color-canvas-bg)] overflow-hidden">
       <TopNav />
-      
+
       {/* Main Workspace */}
       <div className="flex-1 flex min-h-0">
         {/* Problem Panel - Left Side */}
-        <div className="w-[480px] flex-shrink-0 hidden lg:block">
-          <ProblemPanel problem={problem} className="h-full" />
+        <div className="w-[40%] min-w-[450px] max-w-[600px] flex-shrink-0 hidden lg:block border-r border-[var(--color-border)]">
+          <ProblemPanel problem={problem} className="h-full border-none" />
         </div>
 
         {/* Editor Canvas - Right Side */}

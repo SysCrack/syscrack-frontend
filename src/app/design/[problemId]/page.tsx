@@ -141,9 +141,6 @@ export default function DesignPage() {
 
                 {/* Right Panel - Canvas Area */}
                 <main className="flex-1 relative overflow-hidden isolate">
-                    {/* Component Palette - Floating */}
-                    <ComponentPalette />
-
                     {/* Excalidraw Canvas - contained with isolation */}
                     <div className="absolute inset-0 overflow-hidden">
                         <SystemDesignCanvas problemId={problemId} />

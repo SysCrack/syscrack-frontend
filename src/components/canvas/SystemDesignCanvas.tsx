@@ -3,6 +3,8 @@
 import { useCallback, useRef, forwardRef, useImperativeHandle, useState, useEffect } from 'react';
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
+import { ComponentPalette } from '@/components/palette/ComponentPalette';
+import { useCanvasDrop } from '@/lib/hooks/useCanvasDrop';
 import { useUIStore } from '@/stores/uiStore';
 
 // Use inline type extraction from Excalidraw's API
@@ -23,6 +25,7 @@ export interface SystemDesignCanvasHandle {
 const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanvasProps>(
     function SystemDesignCanvas({ problemId }, ref) {
         const excalidrawAPIRef = useRef<ExcalidrawImperativeAPI | null>(null);
+        const containerRef = useRef<HTMLDivElement>(null);
         const [isReady, setIsReady] = useState(false);
         const theme = useUIStore((state) => state.theme);
 
@@ -32,9 +35,31 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
             return () => clearTimeout(timer);
         }, []);
 
-        const handleChange = useCallback((elements: readonly ExcalidrawElement[]) => {
-            console.log(`Canvas updated: ${elements.length} elements`);
-        }, []);
+        // Initialize drop handler for component palette
+        useCanvasDrop({
+            excalidrawAPI: excalidrawAPIRef.current ? {
+                getSceneElements: () => excalidrawAPIRef.current?.getSceneElements() ?? [],
+                updateScene: (opts) => excalidrawAPIRef.current?.updateScene(opts),
+                getAppState: () => excalidrawAPIRef.current?.getAppState() ?? { scrollX: 0, scrollY: 0, zoom: { value: 1 } },
+            } : null,
+            containerRef: containerRef as React.RefObject<HTMLDivElement>,
+        });
+
+        const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+        // ... existing useEffects ...
+
+        const handleChange = useCallback((elements: readonly ExcalidrawElement[], appState: any) => {
+            // Track menu state to shift palette
+            // openMenu can be "dropdown" | "canvas" | null
+            const menuOpen = !!appState?.openMenu;
+            if (menuOpen !== isMenuOpen) {
+                setIsMenuOpen(menuOpen);
+            }
+
+            // Track changes for auto-save (will be added in Phase 3)
+            // console.log(`Canvas updated: ${elements.length} elements`);
+        }, [isMenuOpen]);
 
         const handlePointerUpdate = useCallback(() => { }, []);
 
@@ -73,10 +98,35 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
         const backgroundColor = theme === 'dark' ? '#1a1a2e' : '#f8f9fa';
 
         return (
-            <div
-                className="w-full h-full relative overflow-hidden"
-                style={{ transform: 'translate3d(0, 0, 0)' }}
-            >
+            <div ref={containerRef} className="w-full h-full relative overflow-hidden">
+                {/* Custom Styles to hide unwanted Excalidraw UI elements */}
+                <style>{`
+                    /* Hide aggressive external links in Excalidraw menu */
+                    a[href*="github.com/excalidraw"],
+                    a[href*="discord.gg"],
+                    a[href*="twitter.com"],
+                    a[href*="plus.excalidraw.com"],
+                    .dropdown-menu-item__link {
+                        display: none !important;
+                    }
+                    
+                    /* Hide the 'Excalidraw links' separator/header */
+                    /* Targeted approach for standard Excalidraw DOM structure */
+                    .dropdown-menu-group-header,
+                    .dropdown-menu-item-separator {
+                         display: none !important;
+                    }
+                    
+                    /* Hide empty groups to prevent extra spacing */
+                    .dropdown-menu-group:empty {
+                        display: none !important;
+                    }
+                `}</style>
+
+                {/* Component Palette */}
+                <ComponentPalette isMenuOpen={isMenuOpen} />
+
+                {/* Excalidraw Canvas */}
                 <Excalidraw
                     excalidrawAPI={handleExcalidrawMount}
                     onChange={handleChange}

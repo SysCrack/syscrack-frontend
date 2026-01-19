@@ -13,6 +13,9 @@ export interface ProblemListItem {
 export interface ProblemDetail extends ProblemListItem {
   description: string;
   starter_code: string;
+  requirements: Record<string, unknown>;
+  test_scenarios: string[];
+  hints?: string[];
 }
 
 export interface FetchProblemsParams {
