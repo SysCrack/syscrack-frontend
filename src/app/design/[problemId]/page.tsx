@@ -10,6 +10,9 @@ import { ComponentPalette } from '@/components/palette/ComponentPalette';
 import { getProblemBySlug } from '@/lib/data/mockProblems';
 import { useUIStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useDesignStore } from '@/stores/designStore';
+import { RunSimulationButton } from '@/components/simulation/RunSimulationButton';
+import { ResultsPanel } from '@/components/simulation/ResultsPanel';
 
 // Dynamically import the canvas to avoid SSR issues with Excalidraw
 const SystemDesignCanvas = dynamic(
@@ -24,6 +27,36 @@ function CanvasLoading() {
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[var(--color-primary)] mx-auto mb-4"></div>
                 <p className="text-[var(--color-text-secondary)]">Loading design canvas...</p>
             </div>
+        </div>
+    );
+}
+
+function SaveStatus() {
+    const isSaving = useDesignStore((state) => state.isSaving);
+    const isDirty = useDesignStore((state) => state.isDirty);
+    const saveError = useDesignStore((state) => state.saveError);
+    const lastSavedAt = useDesignStore((state) => state.lastSavedAt);
+
+    let statusText = 'Saved';
+    let statusColor = 'text-[var(--color-text-tertiary)]';
+
+    if (isSaving) {
+        statusText = 'Saving...';
+        statusColor = 'text-[var(--color-primary)]';
+    } else if (saveError) {
+        statusText = 'Save Failed';
+        statusColor = 'text-red-500';
+    } else if (isDirty) {
+        statusText = 'Unsaved changes';
+        statusColor = 'text-[var(--color-text-tertiary)] italic';
+    } else if (lastSavedAt) {
+        statusText = `Saved ${lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+
+    return (
+        <div className={`flex items-center gap-2 text-xs font-medium ${statusColor}`}>
+            {isSaving && <div className="animate-spin h-3 w-3 border-b-2 border-current rounded-full" />}
+            {statusText}
         </div>
     );
 }
@@ -84,7 +117,12 @@ export default function DesignPage() {
                 </div>
 
                 {/* Right: Theme toggle and user */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-4">
+                    {/* Save Status Indicator */}
+                    <SaveStatus />
+
+                    <div className="h-6 w-px bg-[var(--color-border)] opacity-50" />
+
                     {/* Theme Toggle */}
                     <button
                         onClick={toggleTheme}
@@ -152,12 +190,16 @@ export default function DesignPage() {
                         Feedback
                     </button>
 
-                    {/* Submit Button - Bottom Right */}
-                    <button className="absolute bottom-16 right-4 z-50 flex items-center gap-2 px-5 py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white text-sm font-medium rounded-lg shadow-lg transition-colors">
-                        Submit
-                    </button>
+
+                    {/* Submit/Run Button - Bottom Right */}
+                    <div className="absolute bottom-16 right-4 z-50">
+                        <RunSimulationButton />
+                    </div>
                 </main>
             </div>
+
+            {/* Results Panel Overlay */}
+            <ResultsPanel />
         </div>
     );
 }

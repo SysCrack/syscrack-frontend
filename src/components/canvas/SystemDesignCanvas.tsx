@@ -6,6 +6,9 @@ import '@excalidraw/excalidraw/index.css';
 import { ComponentPalette } from '@/components/palette/ComponentPalette';
 import { useCanvasDrop } from '@/lib/hooks/useCanvasDrop';
 import { useUIStore } from '@/stores/uiStore';
+import { useDesignStore } from '@/stores/designStore';
+import * as designsApi from '@/lib/api/designs';
+import { parseExcalidrawScene } from '@/lib/utils/sceneParser';
 
 // Use inline type extraction from Excalidraw's API
 type ExcalidrawImperativeAPI = Parameters<NonNullable<Parameters<typeof Excalidraw>[0]['excalidrawAPI']>>[0];
@@ -29,6 +32,16 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
         const [isReady, setIsReady] = useState(false);
         const theme = useUIStore((state) => state.theme);
 
+        const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+        // Store actions
+        const setDesignId = useDesignStore((state) => state.setDesignId);
+        const setProblemId = useDesignStore((state) => state.setProblemId);
+        const markDirty = useDesignStore((state) => state.markDirty);
+        const startSaving = useDesignStore((state) => state.startSaving);
+        const markSaved = useDesignStore((state) => state.markSaved);
+        const setSaveError = useDesignStore((state) => state.setSaveError);
+
         // Delay mounting Excalidraw slightly
         useEffect(() => {
             const timer = setTimeout(() => setIsReady(true), 200);
@@ -45,21 +58,89 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
             containerRef: containerRef as React.RefObject<HTMLDivElement>,
         });
 
-        const [isMenuOpen, setIsMenuOpen] = useState(false);
+        // Load design on mount
+        useEffect(() => {
+            if (!isReady) return;
 
-        // ... existing useEffects ...
+            const pId = parseInt(problemId);
+            if (isNaN(pId)) return;
 
-        const handleChange = useCallback((elements: readonly ExcalidrawElement[], appState: any) => {
-            // Track menu state to shift palette
-            // openMenu can be "dropdown" | "canvas" | null
-            const menuOpen = !!appState?.openMenu;
-            if (menuOpen !== isMenuOpen) {
-                setIsMenuOpen(menuOpen);
+            setProblemId(pId);
+
+            async function loadDesign() {
+                try {
+                    // List designs for this problem
+                    const designs = await designsApi.listDesigns(pId);
+                    if (designs.length > 0) {
+                        // Load the most recent one (first one)
+                        const designId = designs[0].id;
+                        const detail = await designsApi.getDesign(designId);
+
+                        setDesignId(designId);
+
+                        // Update canvas if data exists
+                        if (detail.canvas_data &&
+                            typeof detail.canvas_data === 'object' &&
+                            'elements' in detail.canvas_data) {
+                            excalidrawAPIRef.current?.updateScene({
+                                elements: (detail.canvas_data as any).elements,
+                                appState: (detail.canvas_data as any).appState
+                            });
+                        }
+                    }
+                } catch (err) {
+                    console.error('Failed to load design:', err);
+                }
             }
 
-            // Track changes for auto-save (will be added in Phase 3)
-            // console.log(`Canvas updated: ${elements.length} elements`);
-        }, [isMenuOpen]);
+            loadDesign();
+        }, [isReady, problemId, setDesignId, setProblemId]);
+
+        // Save function
+        const triggerSave = useCallback(async () => {
+            const api = excalidrawAPIRef.current;
+            if (!api) return;
+
+            const elements = api.getSceneElements();
+            const appState = api.getAppState();
+            const parsed = parseExcalidrawScene(elements as any, appState);
+            const pId = parseInt(problemId);
+
+            startSaving();
+
+            try {
+                // Use current ID from store
+                const designId = useDesignStore.getState().currentDesignId;
+
+                const payload = {
+                    problem_id: pId,
+                    canvas_data: parsed.canvas_data,
+                    components: parsed.components,
+                    connections: parsed.connections
+                };
+
+                if (designId) {
+                    await designsApi.updateDesign(designId, payload);
+                } else {
+                    const newDesign = await designsApi.createDesign(payload);
+                    setDesignId(newDesign.id);
+                }
+                markSaved();
+            } catch (err) {
+                console.error('Save failed:', err);
+                setSaveError(err instanceof Error ? err.message : 'Save failed');
+            }
+        }, [problemId, setDesignId, startSaving, markSaved, setSaveError]);
+
+        const handleChange = useCallback((elements: readonly ExcalidrawElement[], appState: any) => {
+            // Auto-save logic
+            markDirty();
+            if (saveTimeoutRef.current) {
+                clearTimeout(saveTimeoutRef.current);
+            }
+            saveTimeoutRef.current = setTimeout(triggerSave, 2000);
+
+        }, [markDirty, triggerSave]);
 
         const handlePointerUpdate = useCallback(() => { }, []);
 
@@ -124,7 +205,7 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                 `}</style>
 
                 {/* Component Palette */}
-                <ComponentPalette isMenuOpen={isMenuOpen} />
+                <ComponentPalette />
 
                 {/* Excalidraw Canvas */}
                 <Excalidraw

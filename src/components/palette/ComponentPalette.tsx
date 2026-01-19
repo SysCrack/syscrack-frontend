@@ -11,10 +11,9 @@ import { COMPONENT_TEMPLATES, type ComponentTemplate } from '@/lib/templates/com
 
 interface ComponentPaletteProps {
     className?: string;
-    isMenuOpen?: boolean;
 }
 
-export function ComponentPalette({ className = '', isMenuOpen = false }: ComponentPaletteProps) {
+export function ComponentPalette({ className = '' }: ComponentPaletteProps) {
     const [isCollapsed, setIsCollapsed] = useState(false);
 
     const handleDragStart = (e: React.DragEvent, template: ComponentTemplate) => {
@@ -32,12 +31,11 @@ export function ComponentPalette({ className = '', isMenuOpen = false }: Compone
     return (
         <div
             className={`
-        absolute left-4 top-24 z-[60]
+        absolute right-4 top-24 z-[60]
         bg-[var(--color-surface)] rounded-lg shadow-lg border border-[var(--color-border)]
         p-3 w-52 flex flex-col
         max-h-[calc(100%-8rem)]
         transition-transform duration-200 ease-in-out
-        ${isMenuOpen ? 'translate-y-[280px]' : 'translate-y-0'}
         ${className}
       `}
         >
