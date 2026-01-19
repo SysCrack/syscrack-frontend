@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Info, MessageSquare, Code2, Sun, Moon, User, LogOut } from 'lucide-react';
 import { InspectorPanel } from '@/components/inspector/InspectorPanel';
 import type { SystemDesignCanvasHandle } from '@/components/canvas/SystemDesignCanvas';
@@ -112,8 +112,41 @@ export default function DesignPage() {
         }
     }, []);
 
+    // Resizing State
+    const [sidebarWidth, setSidebarWidth] = useState(320);
+    const [isResizing, setIsResizing] = useState(false);
+    const sidebarRef = useRef<HTMLDivElement>(null);
+
+    const startResizing = useCallback(() => {
+        setIsResizing(true);
+    }, []);
+
+    const stopResizing = useCallback(() => {
+        setIsResizing(false);
+    }, []);
+
+    const resize = useCallback((mouseMoveEvent: MouseEvent) => {
+        if (isResizing) {
+            const newWidth = mouseMoveEvent.clientX;
+            if (newWidth >= 300 && newWidth <= 800) {
+                setSidebarWidth(newWidth);
+            }
+        }
+    }, [isResizing]);
+
+    useEffect(() => {
+        window.addEventListener("mousemove", resize);
+        window.addEventListener("mouseup", stopResizing);
+        return () => {
+            window.removeEventListener("mousemove", resize);
+            window.removeEventListener("mouseup", stopResizing);
+        };
+    }, [resize, stopResizing]);
+
     return (
-        <div className="h-screen flex flex-col overflow-hidden bg-[var(--color-canvas-bg)]">
+        <div
+            className={`h-screen flex flex-col overflow-hidden bg-[var(--color-canvas-bg)] ${isResizing ? 'cursor-col-resize select-none' : ''}`}
+        >
             {/* Header ... */}
             <header className="h-14 border-b border-[var(--color-border)] bg-[var(--color-panel-bg)] flex items-center px-4 justify-between flex-shrink-0">
                 {/* ... existing header content ... */}
@@ -210,11 +243,21 @@ export default function DesignPage() {
                 {/* Left Panel - Problem Description */}
                 {showProblemPanel && problem && (
                     <aside
-                        className="w-80 flex-shrink-0 overflow-hidden"
-                        style={{ minWidth: '320px', maxWidth: '400px' }}
+                        ref={sidebarRef}
+                        className="flex-shrink-0 overflow-hidden relative group"
+                        style={{ width: sidebarWidth }}
                     >
                         <ProblemPanel problem={problem} className="h-full" />
+
                     </aside>
+                )}
+
+                {/* Drag Handle */}
+                {showProblemPanel && (
+                    <div
+                        className="w-1 cursor-col-resize hover:bg-[var(--color-primary)] active:bg-[var(--color-primary)] transition-colors bg-[var(--color-border)] flex-shrink-0 z-50"
+                        onMouseDown={startResizing}
+                    />
                 )}
 
                 {/* Right Panel - Canvas Area */}
