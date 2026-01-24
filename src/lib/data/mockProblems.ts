@@ -108,6 +108,37 @@ export const MOCK_PROBLEMS: Record<string, SystemDesignProblem> = {
     },
     is_premium_only: false,
   },
+  'optimize-user-orders': {
+    id: 3,
+    slug: 'optimize-user-orders',
+    title: '3. Optimize User Orders System',
+    difficulty: 'medium',
+    topic: 'System Design',
+    description:
+      'Improve the performance of an existing e-commerce ordering system to handle flash sale traffic spikes.',
+    definition: {
+      functional_requirements: [
+        'Users can place orders successfully during high traffic',
+        'Real-time order status updates',
+        'Inventory management consistency',
+        'Support for millions of active users',
+      ],
+      non_functional_requirements: [
+        'Availability: 99.99%',
+        'Scalability: Handle 10x normal load',
+        'Consistency: Strong consistency for inventory',
+      ],
+      assumptions: [
+        'Database is the current bottleneck',
+        'Read:Write ratio is 50:50 during sales',
+      ],
+      estimated_usage: [
+        { label: 'Normal QPS', value: '1000' },
+        { label: 'Flash Sale Peak QPS', value: '50,000' },
+      ],
+    },
+    is_premium_only: false,
+  },
 };
 
 export function getProblemBySlug(slug: string): SystemDesignProblem | null {

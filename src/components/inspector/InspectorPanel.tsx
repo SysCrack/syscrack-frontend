@@ -1,11 +1,15 @@
-'use client';
-
-import { useState, useEffect } from 'react';
-import { X, Save, RotateCcw } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, RotateCcw, Info, Wallet } from 'lucide-react';
 import { ExcalidrawElement } from '@/components/canvas/SystemDesignCanvas';
 import { isSystemComponent, SystemComponentData } from '@/lib/utils/sceneParser';
 import { getDefaultConfig, getComponentTemplate } from '@/lib/templates/componentTemplates';
 import { ComponentType } from '@/lib/types/design';
+import { calculateComponentCost, formatCost } from '@/lib/utils/costCalculator';
+
+// Modular Field Imports
+import { SelectField } from './fields/SelectField';
+import { NumberField } from './fields/NumberField';
+import { ToggleField } from './fields/ToggleField';
 
 interface InspectorPanelProps {
     element: ExcalidrawElement | null;
@@ -24,6 +28,15 @@ export function InspectorPanel({ element, onUpdate, onClose }: InspectorPanelPro
             setIsDirty(false);
         }
     }, [element]);
+
+    // Calculate cost in real-time
+    const currentCost = useMemo(() => {
+        if (element && isSystemComponent(element)) {
+            const data = element.customData as unknown as SystemComponentData;
+            return calculateComponentCost(data.componentType, config);
+        }
+        return 0;
+    }, [element, config]);
 
     if (!element || !isSystemComponent(element)) {
         return null;
@@ -47,27 +60,33 @@ export function InspectorPanel({ element, onUpdate, onClose }: InspectorPanelPro
     };
 
     return (
-        <div className="absolute top-20 right-4 z-[55] w-64 bg-[var(--color-panel-bg)] border border-[var(--color-border)] rounded-xl shadow-xl flex flex-col max-h-[calc(100vh-350px)] animate-in slide-in-from-right-10 fade-in duration-200">
+        <div className="absolute top-20 right-4 z-[55] w-72 bg-[var(--color-panel-bg)] border border-[var(--color-border)] rounded-xl shadow-2xl flex flex-col max-h-[calc(100vh-120px)] animate-in slide-in-from-right-10 fade-in duration-200 overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] rounded-t-xl">
-                <div className="flex items-center gap-2">
-                    <span className="text-xl">{template?.icon}</span>
+            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-[var(--color-canvas-bg)] border border-[var(--color-border)] flex items-center justify-center text-2xl shadow-sm">
+                        {template?.icon}
+                    </div>
                     <div>
-                        <h3 className="font-semibold text-[var(--color-text-primary)]">{template?.label || 'Component'}</h3>
-                        <p className="text-xs text-[var(--color-text-tertiary)] font-mono truncate max-w-[120px]">{element.id.slice(0, 8)}</p>
+                        <h3 className="font-bold text-sm text-[var(--color-text-primary)] tracking-tight">
+                            {template?.label || 'Component'}
+                        </h3>
+                        <p className="text-[10px] text-[var(--color-text-tertiary)] font-mono uppercase opacity-70">
+                            ID: {element.id.slice(0, 8)}
+                        </p>
                     </div>
                 </div>
                 <div className="flex items-center gap-1">
                     <button
                         onClick={handleReset}
-                        className="p-1.5 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] rounded-lg transition-colors"
+                        className="p-2 text-[var(--color-text-tertiary)] hover:text-[var(--color-primary)] hover:bg-[var(--color-bg-secondary)] rounded-lg transition-all"
                         title="Reset to defaults"
                     >
                         <RotateCcw className="h-4 w-4" />
                     </button>
                     <button
                         onClick={onClose}
-                        className="p-1.5 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] rounded-lg transition-colors"
+                        className="p-2 text-[var(--color-text-tertiary)] hover:text-red-500 hover:bg-[var(--color-bg-secondary)] rounded-lg transition-all"
                     >
                         <X className="h-4 w-4" />
                     </button>
@@ -75,8 +94,19 @@ export function InspectorPanel({ element, onUpdate, onClose }: InspectorPanelPro
             </div>
 
             {/* Form Content */}
-            <div className="p-4 overflow-y-auto space-y-4 custom-scrollbar">
+            <div className="p-5 overflow-y-auto space-y-6 custom-scrollbar bg-[var(--color-panel-bg)]">
                 {renderFormFields(data.componentType, config, handleChange)}
+            </div>
+
+            {/* Footer: Cost & Meta */}
+            <div className="p-4 border-t border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between mt-auto">
+                <div className="flex items-center gap-2 text-[var(--color-text-secondary)]">
+                    <Wallet className="h-4 w-4 text-[var(--color-primary)]" />
+                    <span className="text-xs font-semibold uppercase tracking-wider">Est. Cost</span>
+                </div>
+                <div className="text-sm font-bold text-[var(--color-primary)] animate-in fade-in zoom-in duration-300">
+                    {formatCost(currentCost)}
+                </div>
             </div>
         </div>
     );
@@ -117,6 +147,16 @@ const COMPONENT_RULES: Record<string, any> = {
     },
     [ComponentType.APP_SERVER]: {
         runtimes: ['python', 'go', 'java', 'nodejs']
+    },
+    [ComponentType.CDN]: {
+        providers: ['cloudflare', 'cloudfront', 'fastly']
+    },
+    [ComponentType.OBJECT_STORAGE]: {
+        providers: ['s3', 'gcs', 'azure_blob'],
+        classes: ['standard', 'infrequent', 'archive']
+    },
+    [ComponentType.CLIENT]: {
+        platforms: ['web', 'mobile', 'iot']
     }
 };
 
@@ -126,31 +166,23 @@ function renderFormFields(
     config: Record<string, unknown>,
     onChange: (updates: Record<string, any>) => void
 ) {
-    // Enhanced change handler with validation rules
     const handleFieldChange = (key: string, value: any) => {
         let updates: Record<string, any> = { [key]: value };
 
         // Apply specific rules
         if (type === ComponentType.DATABASE) {
             if (key === 'engine') {
-                // Auto-set type based on engine
                 const mappedType = COMPONENT_RULES[ComponentType.DATABASE].engineToType[value as string];
-                if (mappedType) {
-                    updates.type = mappedType;
-                }
+                if (mappedType) updates.type = mappedType;
             } else if (key === 'type') {
-                // Default engine for type if current engine is invalid
                 const validEngines = COMPONENT_RULES[ComponentType.DATABASE].engines[value as string] || [];
                 if (!validEngines.includes(config.engine as string)) {
                     updates.engine = validEngines[0];
                 }
             }
         } else if (type === ComponentType.CACHE) {
-            if (key === 'type') {
-                // Default to LRU if switching to memcached
-                if (value === 'memcached') {
-                    updates.eviction_policy = 'lru';
-                }
+            if (key === 'type' && value === 'memcached') {
+                updates.eviction_policy = 'lru';
             }
         }
 
@@ -159,7 +191,6 @@ function renderFormFields(
 
     switch (type) {
         case ComponentType.DATABASE:
-            const currentType = config.type as string || 'relational';
             const allEngines = Object.values(COMPONENT_RULES[ComponentType.DATABASE].engines).flat();
             const uniqueEngines = Array.from(new Set(allEngines as string[]));
 
@@ -170,27 +201,33 @@ function renderFormFields(
                         value={config.engine as string}
                         options={uniqueEngines}
                         onChange={(v) => handleFieldChange('engine', v)}
+                        helpText="The storage technology used for this database."
                     />
                     <SelectField
                         label="Type"
                         value={config.type as string}
                         options={['relational', 'nosql', 'search', 'timeseries']}
                         onChange={(v) => handleFieldChange('type', v)}
+                        helpText="Database category determines capabilities."
                     />
                     <NumberField
-                        label="Storage (GB)"
+                        label="Storage"
                         value={config.storage_gb as number}
+                        unit="GB"
                         onChange={(v) => handleFieldChange('storage_gb', v)}
+                        helpText="Disk space allocated to this instance."
                     />
                     <ToggleField
                         label="Sharding"
                         value={config.sharding as boolean}
                         onChange={(v) => handleFieldChange('sharding', v)}
+                        helpText="Enable horizontal partitioning for high write volume."
                     />
                     <NumberField
                         label="Read Replicas"
                         value={config.read_replicas as number}
                         onChange={(v) => handleFieldChange('read_replicas', v)}
+                        helpText="Additional nodes to scale read traffic."
                     />
                 </>
             );
@@ -205,17 +242,27 @@ function renderFormFields(
                         value={config.type as string}
                         options={COMPONENT_RULES[ComponentType.CACHE].types}
                         onChange={(v) => handleFieldChange('type', v)}
+                        helpText="Redis supports more features, Memcached is pure speed."
                     />
                     <SelectField
                         label="Eviction Policy"
                         value={config.eviction_policy as string}
                         options={validPolicies}
                         onChange={(v) => handleFieldChange('eviction_policy', v)}
+                        helpText="How the cache handles full memory scenarios."
                     />
                     <NumberField
-                        label="Memory (GB)"
+                        label="Memory"
                         value={config.memory_gb as number}
+                        unit="GB"
                         onChange={(v) => handleFieldChange('memory_gb', v)}
+                        helpText="RAM allocated for caching data."
+                    />
+                    <ToggleField
+                        label="Cluster Mode"
+                        value={config.cluster_mode as boolean}
+                        onChange={(v) => handleFieldChange('cluster_mode', v)}
+                        helpText="Scale the cache horizontally across multiple nodes."
                     />
                 </>
             );
@@ -229,18 +276,22 @@ function renderFormFields(
                         value={config.type as string}
                         options={COMPONENT_RULES[ComponentType.MESSAGE_QUEUE].types}
                         onChange={(v) => handleFieldChange('type', v)}
+                        helpText="Kafka for high-throughput, RabbitMQ for complex routing."
                     />
                     {isKafka && (
                         <NumberField
                             label="Partitions"
                             value={config.partitions as number}
                             onChange={(v) => handleFieldChange('partitions', v)}
+                            helpText="Number of parallel processing units in Kafka."
                         />
                     )}
                     <NumberField
-                        label="Retention (Hours)"
+                        label="Retention"
                         value={config.retention_hours as number}
+                        unit="Hours"
                         onChange={(v) => handleFieldChange('retention_hours', v)}
+                        helpText="How long messages stay in the queue."
                     />
                 </>
             );
@@ -252,17 +303,20 @@ function renderFormFields(
                         value={config.layer as string}
                         options={COMPONENT_RULES[ComponentType.LOAD_BALANCER].layers}
                         onChange={(v) => handleFieldChange('layer', v)}
+                        helpText="L4 for TCP speed, L7 for HTTP features like path routing."
                     />
                     <SelectField
                         label="Algorithm"
                         value={config.algorithm as string}
                         options={COMPONENT_RULES[ComponentType.LOAD_BALANCER].algorithms}
                         onChange={(v) => handleFieldChange('algorithm', v)}
+                        helpText="How traffic is distributed across healthy targets."
                     />
                     <ToggleField
                         label="SSL Termination"
                         value={config.ssl_termination as boolean}
                         onChange={(v) => handleFieldChange('ssl_termination', v)}
+                        helpText="Handle HTTPS encryption at the load balancer level."
                     />
                 </>
             );
@@ -274,75 +328,86 @@ function renderFormFields(
                         value={config.runtime as string}
                         options={COMPONENT_RULES[ComponentType.APP_SERVER].runtimes}
                         onChange={(v) => handleFieldChange('runtime', v)}
+                        helpText="The programming language environment for your logic."
                     />
                     <NumberField
                         label="Instances"
                         value={config.instances as number}
                         onChange={(v) => handleFieldChange('instances', v)}
+                        helpText="Number of horizontal replicas for this service."
                     />
                     <NumberField
                         label="CPU Cores"
                         value={config.cpu_cores as number}
                         onChange={(v) => handleFieldChange('cpu_cores', v)}
+                        helpText="Processing power allocated per instance."
+                    />
+                </>
+            );
+        case ComponentType.CDN:
+            return (
+                <>
+                    <SelectField
+                        label="Provider"
+                        value={config.provider as string}
+                        options={COMPONENT_RULES[ComponentType.CDN].providers}
+                        onChange={(v) => handleFieldChange('provider', v)}
+                        helpText="Global content delivery network provider."
+                    />
+                    <ToggleField
+                        label="Dynamic Content"
+                        value={config.dynamic_content as boolean}
+                        onChange={(v) => handleFieldChange('dynamic_content', v)}
+                        helpText="Enable edge computing for dynamic requests."
+                    />
+                    <ToggleField
+                        label="Origin Shield"
+                        value={config.origin_shield as boolean}
+                        onChange={(v) => handleFieldChange('origin_shield', v)}
+                        helpText="Additional caching layer to protect your backend servers."
+                    />
+                </>
+            );
+        case ComponentType.OBJECT_STORAGE:
+            return (
+                <>
+                    <SelectField
+                        label="Provider"
+                        value={config.provider as string}
+                        options={COMPONENT_RULES[ComponentType.OBJECT_STORAGE].providers}
+                        onChange={(v) => handleFieldChange('provider', v)}
+                        helpText="Provider for blob/file storage."
+                    />
+                    <SelectField
+                        label="Storage Class"
+                        value={config.storage_class as string}
+                        options={COMPONENT_RULES[ComponentType.OBJECT_STORAGE].classes}
+                        onChange={(v) => handleFieldChange('storage_class', v)}
+                        helpText="Standard for hot data, Archive for cold backups."
+                    />
+                    <NumberField
+                        label="Storage (GB)"
+                        value={config.storage_gb as number}
+                        unit="GB"
+                        onChange={(v) => handleFieldChange('storage_gb', v)}
+                        helpText="Total data volume expected in object storage."
+                    />
+                </>
+            );
+        case ComponentType.CLIENT:
+            return (
+                <>
+                    <SelectField
+                        label="Platform"
+                        value={config.platform as string}
+                        options={COMPONENT_RULES[ComponentType.CLIENT].platforms}
+                        onChange={(v) => handleFieldChange('platform', v)}
+                        helpText="The type of client accessing your system."
                     />
                 </>
             );
         default:
-            return <div className="text-sm text-[var(--color-text-tertiary)]">No configuration available for this component.</div>;
+            return <div className="text-sm text-[var(--color-text-tertiary)] italic">This component has no configurable properties.</div>;
     }
 }
 
-// Field Components
-
-function SelectField({ label, value, options, onChange }: { label: string, value: string, options: string[], onChange: (v: string) => void }) {
-    return (
-        <div className="space-y-1">
-            <label className="text-xs font-medium text-[var(--color-text-secondary)]">{label}</label>
-            <select
-                value={value || ''}
-                onChange={(e) => onChange(e.target.value)}
-                className="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-            >
-                {options.map(opt => (
-                    <option key={opt} value={opt}>{opt}</option>
-                ))}
-            </select>
-        </div>
-    );
-}
-
-function NumberField({ label, value, onChange }: { label: string, value: number, onChange: (v: number) => void }) {
-    return (
-        <div className="space-y-1">
-            <label className="text-xs font-medium text-[var(--color-text-secondary)]">{label}</label>
-            <input
-                type="number"
-                value={value || 0}
-                onChange={(e) => onChange(Number(e.target.value))}
-                className="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-            />
-        </div>
-    );
-}
-
-function ToggleField({ label, value, onChange }: { label: string, value: boolean, onChange: (v: boolean) => void }) {
-    return (
-        <div className="flex items-center justify-between py-1">
-            <label className="text-xs font-medium text-[var(--color-text-secondary)]">{label}</label>
-            <button
-                onClick={() => onChange(!value)}
-                className={`
-                    w-10 h-6 rounded-full transition-colors relative
-                    ${value ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-border)]'}
-                `}
-            >
-                <div
-                    className={`
-                        absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform
-                        ${value ? 'translate-x-4' : 'translate-x-0'}
-                    `}
-                />
-            </button>
-        </div>
-    );
-}

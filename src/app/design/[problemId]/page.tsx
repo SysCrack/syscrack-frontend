@@ -9,6 +9,7 @@ import { InspectorPanel } from '@/components/inspector/InspectorPanel';
 import type { SystemDesignCanvasHandle } from '@/components/canvas/SystemDesignCanvas';
 import { ProblemPanel } from '@/components/problem/ProblemPanel';
 import { ComponentPalette } from '@/components/palette/ComponentPalette';
+import { getProblemBySlug } from '@/lib/data/mockProblems';
 import { fetchSystemDesignProblem, fetchSystemDesignProblemBySlug } from '@/lib/api/problems';
 import type { SystemDesignProblemDetail } from '@/lib/types/design';
 import { useUIStore } from '@/stores/uiStore';
@@ -109,8 +110,27 @@ export default function DesignPage() {
                 }
                 setProblem(data);
             } catch (err) {
-                console.error('Failed to load problem:', err);
-                setError(err instanceof Error ? err.message : 'Failed to load problem');
+                console.error('Failed to load from API, trying mock data:', err);
+                // Fallback to mock data
+                const mockProblem = getProblemBySlug(problemId);
+                if (mockProblem) {
+                    // Map SystemDesignProblem (mock) to SystemDesignProblemDetail (expected by state)
+                    const mappedProblem: SystemDesignProblemDetail = {
+                        id: mockProblem.id,
+                        title: mockProblem.title,
+                        slug: mockProblem.slug,
+                        difficulty: mockProblem.difficulty,
+                        is_premium_only: mockProblem.is_premium_only,
+                        description: mockProblem.description,
+                        definition: mockProblem.definition,
+                        requirements: {}, // Standard empty requirements
+                        test_scenarios: [],
+                        api_endpoints: []
+                    };
+                    setProblem(mappedProblem);
+                } else {
+                    setError(err instanceof Error ? err.message : 'Failed to load problem');
+                }
             } finally {
                 setIsLoading(false);
             }
@@ -321,15 +341,19 @@ export default function DesignPage() {
 
             {/* Main Content */}
             <div className="flex flex-1 overflow-hidden">
-                {/* Left Panel - Problem Description */}
+                {/* Left Panel - Problem Description & Components */}
                 {showProblemPanel && problem && (
                     <aside
                         ref={sidebarRef}
-                        className="flex-shrink-0 overflow-hidden relative group"
+                        className="flex-shrink-0 overflow-hidden relative group border-r border-[var(--color-border)] flex flex-col bg-[var(--color-panel-bg)]"
                         style={{ width: sidebarWidth }}
                     >
-                        <ProblemPanel problem={problem} className="h-full" />
+                        <div className="flex-1 overflow-y-auto">
+                            <ProblemPanel problem={problem} className="h-full border-r-0" />
+                        </div>
 
+                        {/* Integrated Component Palette */}
+                        <ComponentPalette floating={false} />
                     </aside>
                 )}
 
@@ -343,6 +367,9 @@ export default function DesignPage() {
 
                 {/* Right Panel - Canvas Area */}
                 <main className="flex-1 relative overflow-hidden isolate">
+                    {/* Component Palette - Floating (only if sidebar is closed) */}
+                    {!showProblemPanel && <ComponentPalette floating={true} />}
+
                     {/* Excalidraw Canvas - contained with isolation */}
                     <div className="absolute inset-0 overflow-hidden">
                         <SystemDesignCanvas

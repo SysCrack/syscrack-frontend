@@ -13,9 +13,15 @@ interface ComponentPaletteProps {
     className?: string;
     collapsed?: boolean;
     onToggle?: (collapsed: boolean) => void;
+    floating?: boolean;
 }
 
-export function ComponentPalette({ className = '', collapsed, onToggle }: ComponentPaletteProps) {
+export function ComponentPalette({
+    className = '',
+    collapsed,
+    onToggle,
+    floating = true
+}: ComponentPaletteProps) {
     const [isCollapsedLocal, setIsCollapsedLocal] = useState(false);
 
     const isCollapsed = collapsed !== undefined ? collapsed : isCollapsedLocal;
@@ -40,19 +46,22 @@ export function ComponentPalette({ className = '', collapsed, onToggle }: Compon
         e.dataTransfer.effectAllowed = 'copy';
     };
 
+    const floatingClasses = floating
+        ? 'absolute right-4 bottom-24 z-[60] bg-[var(--color-surface)] rounded-lg shadow-lg border border-[var(--color-border)] p-3'
+        : 'relative w-full border-t border-[var(--color-border)] bg-[var(--color-panel-bg)] p-4';
+
     return (
         <div
             className={`
-        absolute right-4 bottom-28 z-[60]
-        bg-[var(--color-surface)] rounded-lg shadow-lg border border-[var(--color-border)]
-        p-3 w-52 flex flex-col-reverse
-        max-h-[60vh]
+        ${floatingClasses}
+        flex flex-col
+        max-h-[70vh]
         transition-transform duration-200 ease-in-out
         ${className}
       `}
         >
             <div
-                className="flex items-center justify-between cursor-pointer mt-2 px-1 flex-shrink-0 select-none border-t border-[var(--color-border)] pt-2"
+                className="flex items-center justify-between cursor-pointer mb-2 px-1 flex-shrink-0 select-none"
                 onClick={(e) => {
                     e.stopPropagation();
                     handleToggle();
@@ -70,7 +79,11 @@ export function ComponentPalette({ className = '', collapsed, onToggle }: Compon
 
             {!isCollapsed && (
                 <>
-                    <div className="space-y-1 overflow-y-auto min-h-0 pr-1 custom-scrollbar mb-1 flex flex-col-reverse">
+                    <p className="text-[10px] text-[var(--color-text-tertiary)] mb-2 px-1 text-center flex-shrink-0 uppercase tracking-wider font-bold">
+                        Drag onto canvas
+                    </p>
+
+                    <div className="space-y-1 overflow-y-auto min-h-0 pr-1 custom-scrollbar">
                         {COMPONENT_TEMPLATES.map((template) => (
                             <button
                                 key={template.type}
@@ -92,10 +105,6 @@ export function ComponentPalette({ className = '', collapsed, onToggle }: Compon
                             </button>
                         ))}
                     </div>
-
-                    <p className="text-xs text-[var(--color-text-tertiary)] mt-3 px-1 text-center flex-shrink-0">
-                        Drag onto canvas
-                    </p>
                 </>
             )}
         </div>
