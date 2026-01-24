@@ -50,11 +50,28 @@ export async function apiFetch<T>(
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new ApiError(
-      response.status,
-      errorData.detail || `Request failed with status ${response.status}`
-    );
+    // Try to parse error message
+    let errorMessage = 'An error occurred';
+    try {
+      const errorData = await response.json();
+
+      // Enhanced logging for validation errors
+      if (response.status === 422) {
+        console.error('Validation Error (422):', JSON.stringify(errorData, null, 2));
+        if (errorData.detail) {
+          errorMessage = Array.isArray(errorData.detail)
+            ? errorData.detail.map((e: any) => `${e.loc.join('.')}: ${e.msg}`).join('\n')
+            : errorData.detail;
+        }
+      } else {
+        errorMessage = errorData.message || errorData.detail || 'An error occurred';
+      }
+    } catch (e) {
+      // If response is not JSON
+      errorMessage = response.statusText;
+    }
+
+    throw new Error(errorMessage);
   }
 
   // Handle empty responses (e.g., 204 No Content)

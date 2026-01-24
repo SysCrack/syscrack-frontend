@@ -14,7 +14,7 @@ export async function runSimulation(
     designId: number,
     request: SimulationRequest = {}
 ): Promise<{ job_id: string; status: string; estimated_time_sec: number }> {
-    return apiFetch(`/designs/${designId}/simulate`, {
+    return apiFetch(`/simulations/designs/${designId}/run`, {
         method: 'POST',
         body: JSON.stringify(request),
     }, true);

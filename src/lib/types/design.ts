@@ -275,8 +275,18 @@ export interface SystemDesignProblemList {
     is_premium_only: boolean;
 }
 
+
+export interface ProblemDefinition {
+    functional_requirements: string[];
+    non_functional_requirements: string[];
+    assumptions: string[];
+    estimated_usage: { label: string; value: string }[];
+    example?: { input: string; output: string };
+}
+
 export interface SystemDesignProblemDetail extends SystemDesignProblemList {
     description: string;
+    definition: ProblemDefinition;
     requirements: Record<string, unknown>;
     api_endpoints?: unknown[];
     test_scenarios: string[];

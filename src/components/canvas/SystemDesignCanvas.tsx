@@ -8,7 +8,8 @@ import { useCanvasDrop } from '@/lib/hooks/useCanvasDrop';
 import { useUIStore } from '@/stores/uiStore';
 import { useDesignStore } from '@/stores/designStore';
 import * as designsApi from '@/lib/api/designs';
-import { parseExcalidrawScene } from '@/lib/utils/sceneParser';
+import { parseExcalidrawScene, isSystemConnection, SystemConnectionData } from '@/lib/utils/sceneParser';
+import { DataFlowOverlay } from '@/components/canvas/DataFlowOverlay';
 
 // Use inline type extraction from Excalidraw's API
 // Use inline type extraction from Excalidraw's API
@@ -25,6 +26,7 @@ export interface SystemDesignCanvasHandle {
     updateScene: (elements: ExcalidrawElement[]) => void;
     getSelectedElement: () => ExcalidrawElement | null;
     getExcalidrawAPI: () => ExcalidrawImperativeAPI | null;
+    triggerSave: () => Promise<void>;
 }
 
 const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanvasProps>(
@@ -35,6 +37,28 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
         const theme = useUIStore((state) => state.theme);
 
         const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+        const isSavingRef = useRef(false);  // Lock to prevent concurrent saves
+
+        // Animation Overlay State
+        const [overlayConnections, setOverlayConnections] = useState<any[]>([]);
+        const [viewport, setViewport] = useState({ scrollX: 0, scrollY: 0, zoom: 1 });
+        const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+        // Update dimensions on resize
+        useEffect(() => {
+            if (!containerRef.current) return;
+            const observer = new ResizeObserver((entries) => {
+                for (const entry of entries) {
+                    setDimensions({
+                        width: entry.contentRect.width,
+                        height: entry.contentRect.height
+                    });
+                }
+            });
+            observer.observe(containerRef.current);
+            return () => observer.disconnect();
+        }, []);
 
         // Store actions
         const setDesignId = useDesignStore((state) => state.setDesignId);
@@ -84,9 +108,15 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                         if (detail.canvas_data &&
                             typeof detail.canvas_data === 'object' &&
                             'elements' in detail.canvas_data) {
+
+                            const savedAppState = (detail.canvas_data as any).appState || {};
+                            // Excalidraw expects collaborators to be a Map, but JSON makes it an object.
+                            // We don't need collaborators for this use case, so we remove it to avoid "forEach is not a function" error.
+                            const { collaborators, ...cleanAppState } = savedAppState;
+
                             excalidrawAPIRef.current?.updateScene({
                                 elements: (detail.canvas_data as any).elements,
-                                appState: (detail.canvas_data as any).appState
+                                appState: cleanAppState
                             });
                         }
                     }
@@ -108,12 +138,23 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
             const parsed = parseExcalidrawScene(elements as any, appState);
             const pId = parseInt(problemId);
 
+            // Don't auto-create empty designs
+            const designId = useDesignStore.getState().currentDesignId;
+            if (!designId && parsed.components.length === 0) {
+                console.log('Skipping save: Empty new design');
+                return;
+            }
+
+            // Prevent concurrent saves (race condition)
+            if (isSavingRef.current) {
+                console.log('Skipping save: Already saving');
+                return;
+            }
+            isSavingRef.current = true;
+
             startSaving();
 
             try {
-                // Use current ID from store
-                const designId = useDesignStore.getState().currentDesignId;
-
                 const payload = {
                     problem_id: pId,
                     canvas_data: parsed.canvas_data,
@@ -135,6 +176,8 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                     console.error('Save failed:', err);
                 }
                 setSaveError(message === 'Failed to fetch' ? 'Backend Unavailable' : message);
+            } finally {
+                isSavingRef.current = false;
             }
         }, [problemId, setDesignId, startSaving, markSaved, setSaveError]);
 
@@ -148,12 +191,36 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
 
         // ... existing handleChange ...
         const handleChange = useCallback((elements: readonly ExcalidrawElement[], appState: any) => {
-            // Auto-save logic
+            // Mark as dirty (user will manually save)
             markDirty();
-            if (saveTimeoutRef.current) {
-                clearTimeout(saveTimeoutRef.current);
-            }
-            saveTimeoutRef.current = setTimeout(triggerSave, 2000);
+
+            // Support Animation Overlay
+            setViewport({
+                scrollX: appState.scrollX,
+                scrollY: appState.scrollY,
+                zoom: appState.zoom.value
+            });
+
+            // Parse connections for overlay (debounced ideal, but simple for now)
+            // Only update if we have system connections
+            const connections = elements
+                .filter(el => isSystemConnection(el) && !el.isDeleted)
+                .map(el => {
+                    const data = el.customData as unknown as SystemConnectionData;
+                    // Excalidraw linear elements have points
+                    const points = (el as any).points || [];
+                    const lastPoint = points[points.length - 1] || [0, 0];
+                    return {
+                        id: el.id,
+                        protocol: data.protocol || 'http',
+                        startX: el.x,
+                        startY: el.y,
+                        endX: el.x + lastPoint[0],
+                        endY: el.y + lastPoint[1],
+                        throughputQps: data.throughput_qps
+                    };
+                });
+            setOverlayConnections(connections);
 
             // Handle Selection Change
             const selectedIds = Object.keys(appState.selectedElementIds || {});
@@ -177,7 +244,7 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                     }
                 }
             }
-        }, [markDirty, triggerSave, onSelectionChange]);
+        }, [markDirty, onSelectionChange]);
 
         // ... (lines 169-230)
 
@@ -210,7 +277,10 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                 return null;
             },
             getExcalidrawAPI: () => excalidrawAPIRef.current,
-        }), []);
+            triggerSave: async () => {
+                await triggerSave();
+            },
+        }), [triggerSave]);
 
         if (!isReady) {
             return (
@@ -275,6 +345,14 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                             saveToActiveFile: false,
                         },
                     }}
+                />
+
+                {/* Animation Overlay - Must be AFTER Excalidraw to sit on top of canvas */}
+                <DataFlowOverlay
+                    connections={overlayConnections}
+                    viewportTransform={viewport}
+                    width={dimensions.width}
+                    height={dimensions.height}
                 />
             </div>
         );

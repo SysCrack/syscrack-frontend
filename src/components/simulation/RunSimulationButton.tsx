@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Play, Loader2, AlertCircle } from 'lucide-react';
 import { useDesignStore } from '@/stores/designStore';
 import { useSimulationStore } from '@/stores/simulationStore';
+import { useFlowAnimation } from '@/lib/hooks/useFlowAnimation';
 import * as simulationsApi from '@/lib/api/simulations';
 import { SimulationStatus } from '@/lib/types/design';
 
@@ -55,6 +56,8 @@ export function RunSimulationButton() {
                             statusRes.grading_result || undefined,
                             statusRes.estimation_comparison || undefined
                         );
+                        // Start flow animation after successful simulation
+                        useFlowAnimation.getState().play();
                     } else if (statusRes.status === SimulationStatus.FAILED) {
                         if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
                         setError(statusRes.error || 'Simulation failed');

@@ -21,9 +21,9 @@ interface ExcalidrawElement {
     width?: number;
     height?: number;
     customData?: Record<string, unknown>;
-    boundElements?: Array<{ type: string; id: string }>;
-    startBinding?: { elementId: string };
-    endBinding?: { elementId: string };
+    boundElements?: readonly { type: string; id: string }[] | null;
+    startBinding?: { elementId: string } | null;
+    endBinding?: { elementId: string } | null;
 }
 
 // Custom data structure for system components
@@ -102,46 +102,65 @@ export function parseExcalidrawScene(
     const connections: ConnectionCreate[] = [];
     const warnings: string[] = [];
 
-    // Track component IDs for connection validation
-    const componentIds = new Set<string>();
+    // Map Excalidraw ID -> Backend UUID
+    const idMapping = new Map<string, string>();
+
+    // First pass: Create UUIDs for valid system components
+    for (const element of elements) {
+        if (isSystemComponent(element)) {
+            // Generate a deterministic UUID if possible, or just a new one?
+            // For saving/loading to work, we might want to be careful.
+            // If we load from backend, we get UUIDs. If we send them back, they are UUIDs.
+            // If we create new ones in Excalidraw, they are short strings.
+
+            // Check if element.id is already a UUID (from a previous load)
+            const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(element.id);
+            const backendId = isUUID ? element.id : uuidv4();
+
+            idMapping.set(element.id, backendId);
+        }
+    }
 
     // Extract components
     for (const element of elements) {
         if (isSystemComponent(element)) {
             const data = element.customData as unknown as SystemComponentData;
+            const backendId = idMapping.get(element.id)!;
 
             components.push({
-                id: element.id,
+                id: backendId, // Send valid UUID
                 type: data.componentType,
                 name: extractComponentName(element, elements),
                 config: data.componentConfig || {},
                 position: { x: element.x, y: element.y },
             });
-
-            componentIds.add(element.id);
         }
     }
 
     // Extract connections (arrows between components)
     for (const element of elements) {
         if (element.type === 'arrow') {
-            const sourceId = element.startBinding?.elementId;
-            const targetId = element.endBinding?.elementId;
+            const sourceExcalidrawId = element.startBinding?.elementId;
+            const targetExcalidrawId = element.endBinding?.elementId;
 
             // Check if arrow connects two system components
-            if (sourceId && targetId && componentIds.has(sourceId) && componentIds.has(targetId)) {
+            if (sourceExcalidrawId && targetExcalidrawId &&
+                idMapping.has(sourceExcalidrawId) && idMapping.has(targetExcalidrawId)) {
+
                 const connData = element.customData as SystemConnectionData | undefined;
 
+                // Also ensure connection ID is UUID if provided (though backend generates it usually)
+                // We'll let backend generate connection IDs for new ones
+
                 connections.push({
-                    id: element.id,
-                    source_id: sourceId,
-                    target_id: targetId,
+                    // id: element.id, // Don't send Excalidraw ID for connection likely
+                    source_id: idMapping.get(sourceExcalidrawId)!,
+                    target_id: idMapping.get(targetExcalidrawId)!,
                     protocol: connData?.protocol || 'http',
                     throughput_qps: connData?.throughput_qps,
                 });
-            } else if (sourceId || targetId) {
-                // Arrow is partially connected - might be a work in progress
-                // Only warn if it has system connection data
+            } else if (sourceExcalidrawId || targetExcalidrawId) {
+                // ... waring logic
                 if (element.customData?.isSystemConnection) {
                     warnings.push(`Connection ${element.id} is not fully connected`);
                 }
@@ -149,7 +168,7 @@ export function parseExcalidrawScene(
         }
     }
 
-    // Add warnings for orphaned components
+    // Add warnings for orphaned components (using backend IDs logic matches excalidraw logic implicitly)
     const connectedComponents = new Set<string>();
     for (const conn of connections) {
         connectedComponents.add(conn.source_id);

@@ -48,15 +48,17 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
     ...apiProblem,
     // Map API requirements to UI format
     // Fallback to empty arrays if data is missing or not in expected format
-    example: (apiProblem.requirements?.example as any) || { input: "", output: "" },
-    functionalRequirements: (apiProblem.requirements?.functional as any[])?.map(
-      r => typeof r === 'string' ? { text: r } : r
-    ) || [],
-    nonfunctionalRequirements: (apiProblem.requirements?.non_functional as any[])?.map(
-      r => typeof r === 'string' ? { text: r } : r
-    ) || [],
-    assumptions: (apiProblem.requirements?.assumptions as string[]) || [],
-    estimatedUsage: (apiProblem.requirements?.estimated_usage as any[]) || [],
+    definition: {
+      example: (apiProblem.requirements?.example as any) || { input: "", output: "" },
+      functional_requirements: (apiProblem.requirements?.functional as any[])?.map(
+        r => typeof r === 'string' ? r : r.text
+      ) || [],
+      non_functional_requirements: (apiProblem.requirements?.non_functional as any[])?.map(
+        r => typeof r === 'string' ? r : r.text
+      ) || [],
+      assumptions: (apiProblem.requirements?.assumptions as string[]) || [],
+      estimated_usage: (apiProblem.requirements?.estimated_usage as any[]) || [],
+    },
   } : null;
 
   // Submission state

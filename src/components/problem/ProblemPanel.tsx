@@ -4,10 +4,10 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { Badge } from "@/components/ui";
 import { cn } from "@/lib/utils/cn";
-import type { SystemDesignProblem } from "@/lib/data/mockProblems";
+import type { SystemDesignProblemDetail, ProblemDefinition } from "@/lib/types/design";
 
 interface ProblemPanelProps {
-  problem: SystemDesignProblem;
+  problem: SystemDesignProblemDetail;
   className?: string;
 }
 
@@ -66,6 +66,8 @@ function BulletList({ items }: { items: string[] }) {
 }
 
 export function ProblemPanel({ problem, className }: ProblemPanelProps) {
+  const definition = problem.definition;
+
   return (
     <div
       className={cn(
@@ -82,7 +84,7 @@ export function ProblemPanel({ problem, className }: ProblemPanelProps) {
 
         {/* Badges */}
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={difficultyVariants[problem.difficulty]}>
+          <Badge variant={difficultyVariants[problem.difficulty as keyof typeof difficultyVariants] || "medium"}>
             {problem.difficulty.charAt(0).toUpperCase() +
               problem.difficulty.slice(1)}
           </Badge>
@@ -105,70 +107,66 @@ export function ProblemPanel({ problem, className }: ProblemPanelProps) {
         </CollapsibleSection>
 
         {/* Example */}
-        <CollapsibleSection title="Example" defaultOpen={true}>
-          <div className="space-y-2 text-sm">
-            <div>
-              <span className="font-medium text-[var(--color-text-primary)]">Input: </span>
-              <span className="text-[var(--color-primary)]">{problem.example.input}</span>
+        {definition?.example && (
+          <CollapsibleSection title="Example" defaultOpen={true}>
+            <div className="space-y-2 text-sm">
+              <div>
+                <span className="font-medium text-[var(--color-text-primary)]">Input: </span>
+                <span className="text-[var(--color-primary)]">{definition.example.input}</span>
+              </div>
+              <div>
+                <span className="font-medium text-[var(--color-text-primary)]">Output: </span>
+                <span className="text-[var(--color-primary)]">{definition.example.output}</span>
+              </div>
             </div>
-            <div>
-              <span className="font-medium text-[var(--color-text-primary)]">Output: </span>
-              <span className="text-[var(--color-primary)]">{problem.example.output}</span>
-            </div>
-          </div>
-        </CollapsibleSection>
+          </CollapsibleSection>
+        )}
 
         {/* Functional Requirements */}
-        <CollapsibleSection title="Functional Requirements" defaultOpen={true}>
-          <ul className="space-y-1.5 text-sm text-[var(--color-text-secondary)] ml-1">
-            {problem.functionalRequirements.map((req, index) => (
-              <li key={index} className="flex items-start gap-2">
-                <span className="text-[var(--color-text-tertiary)] mt-1">•</span>
-                {req.isLink ? (
-                  <span className="text-[var(--color-primary)] underline cursor-pointer hover:opacity-80">
-                    {req.text}
-                  </span>
-                ) : (
-                  <span>{req.text}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </CollapsibleSection>
+        {definition?.functional_requirements && definition.functional_requirements.length > 0 && (
+          <CollapsibleSection title="Functional Requirements" defaultOpen={true}>
+            <BulletList items={definition.functional_requirements} />
+          </CollapsibleSection>
+        )}
 
         {/* Nonfunctional Requirements */}
-        <CollapsibleSection title="Nonfunctional Requirements" defaultOpen={true}>
-          <BulletList
-            items={problem.nonfunctionalRequirements.map(r => r.text)}
-          />
-        </CollapsibleSection>
+        {definition?.non_functional_requirements && definition.non_functional_requirements.length > 0 && (
+          <CollapsibleSection title="Nonfunctional Requirements" defaultOpen={true}>
+            <BulletList items={definition.non_functional_requirements} />
+          </CollapsibleSection>
+        )}
 
         {/* Assumptions */}
-        <CollapsibleSection title="Assumptions" defaultOpen={true}>
-          <BulletList items={problem.assumptions} />
-        </CollapsibleSection>
+        {definition?.assumptions && definition.assumptions.length > 0 && (
+          <CollapsibleSection title="Assumptions" defaultOpen={true}>
+            <BulletList items={definition.assumptions} />
+          </CollapsibleSection>
+        )}
 
         {/* Estimated Usage */}
-        <CollapsibleSection title="Estimated Usage" defaultOpen={true}>
-          <ul className="space-y-1.5 text-sm text-[var(--color-text-secondary)] ml-1">
-            {problem.estimatedUsage.map((usage, index) => (
-              <li key={index} className="flex items-start gap-2">
-                <span className="text-[var(--color-text-tertiary)] mt-1">•</span>
-                <span>
-                  {usage.label}
-                  {usage.value && (
-                    <span className="font-medium text-[var(--color-text-primary)]">
-                      : {usage.value}
-                    </span>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </CollapsibleSection>
+        {definition?.estimated_usage && definition.estimated_usage.length > 0 && (
+          <CollapsibleSection title="Estimated Usage" defaultOpen={true}>
+            <ul className="space-y-1.5 text-sm text-[var(--color-text-secondary)] ml-1">
+              {definition.estimated_usage.map((usage, index) => (
+                <li key={index} className="flex items-start gap-2">
+                  <span className="text-[var(--color-text-tertiary)] mt-1">•</span>
+                  <span>
+                    {usage.label}
+                    {usage.value && (
+                      <span className="font-medium text-[var(--color-text-primary)]">
+                        : {usage.value}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </CollapsibleSection>
+        )}
       </div>
     </div>
   );
 }
 
 export default ProblemPanel;
+

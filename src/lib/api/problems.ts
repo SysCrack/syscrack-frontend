@@ -83,3 +83,32 @@ export async function fetchProblemBySlug(slug: string): Promise<ProblemDetail> {
   return apiFetch<ProblemDetail>(`/problems/slug/${slug}`, {}, true);
 }
 
+// ============ System Design Problems ============
+
+import type { SystemDesignProblemList, SystemDesignProblemDetail } from '@/lib/types/design';
+
+/**
+ * Fetch all system design problems (public endpoint)
+ */
+export async function fetchSystemDesignProblems(): Promise<SystemDesignProblemDetail[]> {
+  try {
+    return await apiFetch<SystemDesignProblemDetail[]>('/system-design-problems', {}, false);
+  } catch (error) {
+    console.warn("API unavailable for system design problems:", error);
+    return [];
+  }
+}
+
+/**
+ * Fetch a system design problem by ID (requires auth)
+ */
+export async function fetchSystemDesignProblem(id: number): Promise<SystemDesignProblemDetail> {
+  return apiFetch<SystemDesignProblemDetail>(`/system-design-problems/${id}`, {}, true);
+}
+
+/**
+ * Fetch a system design problem by slug (requires auth)
+ */
+export async function fetchSystemDesignProblemBySlug(slug: string): Promise<SystemDesignProblemDetail> {
+  return apiFetch<SystemDesignProblemDetail>(`/system-design-problems/slug/${slug}`, {}, true);
+}

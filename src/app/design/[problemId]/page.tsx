@@ -9,12 +9,16 @@ import { InspectorPanel } from '@/components/inspector/InspectorPanel';
 import type { SystemDesignCanvasHandle } from '@/components/canvas/SystemDesignCanvas';
 import { ProblemPanel } from '@/components/problem/ProblemPanel';
 import { ComponentPalette } from '@/components/palette/ComponentPalette';
-import { getProblemBySlug } from '@/lib/data/mockProblems';
+import { fetchSystemDesignProblem, fetchSystemDesignProblemBySlug } from '@/lib/api/problems';
+import type { SystemDesignProblemDetail } from '@/lib/types/design';
 import { useUIStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useDesignStore } from '@/stores/designStore';
 import { RunSimulationButton } from '@/components/simulation/RunSimulationButton';
 import { ResultsPanel } from '@/components/simulation/ResultsPanel';
+import { FlowControls } from '@/components/canvas/FlowControls';
+import { SaveDesignButton } from '@/components/canvas/SaveDesignButton';
+import { ShowResultsButton } from '@/components/simulation/ShowResultsButton';
 
 // Dynamically import the canvas to avoid SSR issues with Excalidraw
 const SystemDesignCanvas = dynamic(
@@ -77,8 +81,42 @@ export default function DesignPage() {
     const [selectedElement, setSelectedElement] = useState<any>(null);
     const canvasRef = useRef<SystemDesignCanvasHandle>(null);
 
-    // Get problem data (mock for now, will be API call later)
-    const problem = getProblemBySlug(problemId);
+    // Manual Save Handler
+    const handleManualSave = useCallback(async () => {
+        if (canvasRef.current) {
+            await canvasRef.current.triggerSave();
+        }
+    }, []);
+
+    // Problem data from API
+    const [problem, setProblem] = useState<SystemDesignProblemDetail | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    // Fetch problem data from API
+    useEffect(() => {
+        async function loadProblem() {
+            setIsLoading(true);
+            setError(null);
+            try {
+                // Try to parse as number first, otherwise use slug
+                const id = parseInt(problemId);
+                let data: SystemDesignProblemDetail;
+                if (!isNaN(id)) {
+                    data = await fetchSystemDesignProblem(id);
+                } else {
+                    data = await fetchSystemDesignProblemBySlug(problemId);
+                }
+                setProblem(data);
+            } catch (err) {
+                console.error('Failed to load problem:', err);
+                setError(err instanceof Error ? err.message : 'Failed to load problem');
+            } finally {
+                setIsLoading(false);
+            }
+        }
+        loadProblem();
+    }, [problemId]);
 
     const handleSelectionChange = useCallback((element: any) => {
         setSelectedElement(element);
@@ -142,6 +180,49 @@ export default function DesignPage() {
             window.removeEventListener("mouseup", stopResizing);
         };
     }, [resize, stopResizing]);
+
+    // Loading state
+    if (isLoading) {
+        return (
+            <div className="flex items-center justify-center h-screen bg-[var(--color-bg)]">
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[var(--color-primary)] mx-auto mb-4"></div>
+                    <p className="text-[var(--color-text-secondary)]">Loading problem...</p>
+                </div>
+            </div>
+        );
+    }
+
+    // Error state
+    if (error) {
+        return (
+            <div className="flex flex-col items-center justify-center h-screen bg-[var(--color-bg)] text-[var(--color-text-secondary)]">
+                <div className="text-xl font-semibold mb-2 text-red-500">Error Loading Problem</div>
+                <p>{error}</p>
+                <Link
+                    href="/problems"
+                    className="mt-4 px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)]"
+                >
+                    Back to Problems
+                </Link>
+            </div>
+        );
+    }
+
+    if (!problem) {
+        return (
+            <div className="flex flex-col items-center justify-center h-screen bg-[var(--color-bg)] text-[var(--color-text-secondary)]">
+                <div className="text-xl font-semibold mb-2">Problem Not Found</div>
+                <p>Could not find problem with ID: {problemId}</p>
+                <Link
+                    href="/problems"
+                    className="mt-4 px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)]"
+                >
+                    Back to Problems
+                </Link>
+            </div>
+        );
+    }
 
     return (
         <div
@@ -266,7 +347,7 @@ export default function DesignPage() {
                     <div className="absolute inset-0 overflow-hidden">
                         <SystemDesignCanvas
                             ref={canvasRef}
-                            problemId={problemId}
+                            problemId={problem ? problem.id.toString() : '0'}
                             onSelectionChange={handleSelectionChange}
                         />
                     </div>
@@ -280,8 +361,15 @@ export default function DesignPage() {
                         onClose={() => setSelectedElement(null)}
                     />
 
+                    {/* Flow Controls - Bottom Center */}
+                    <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-50">
+                        <FlowControls />
+                    </div>
+
                     {/* Submit/Run Button - Bottom Right */}
-                    <div className="absolute bottom-16 right-4 z-50">
+                    <div className="absolute bottom-16 right-4 z-50 flex items-center gap-3">
+                        <ShowResultsButton />
+                        <SaveDesignButton onSave={handleManualSave} />
                         <RunSimulationButton />
                     </div>
                 </main>

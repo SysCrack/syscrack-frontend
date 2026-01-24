@@ -96,10 +96,10 @@ export function ResultsPanel() {
                                             </div>
                                             {/* Metrics Mini-Grid */}
                                             <div className="grid grid-cols-2 gap-2 text-xs text-[var(--color-text-secondary)] mt-2 bg-[var(--color-bg-secondary)]/50 p-2 rounded">
-                                                <div className="flex items-center gap-1">
+                                                <div className="flex items-center gap-1 cursor-help" title="Queries Per Second: The number of successful requests processed per second.">
                                                     <TrendingUp className="h-3 w-3" /> QPS: {res.metrics.throughput_qps.toLocaleString()}
                                                 </div>
-                                                <div className="flex items-center gap-1">
+                                                <div className="flex items-center gap-1 cursor-help" title="P95 Latency: The response time for the slowest 5% of requests. Lower is better.">
                                                     <Clock className="h-3 w-3" /> Latency: {Math.round(res.metrics.p95_latency_ms)}ms (P95)
                                                 </div>
                                             </div>
