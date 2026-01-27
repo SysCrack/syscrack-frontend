@@ -9,6 +9,8 @@ export interface FlowAnimationState {
     speed: number; // 0.5, 1, 2
     bottleneckComponents: string[];
     activeConnections: string[];
+    connectionHealth: Record<string, 'good' | 'stressed' | 'failed'>;
+    connectionReasons: Record<string, string>;
 
     // Actions
     play: () => void;
@@ -17,6 +19,8 @@ export interface FlowAnimationState {
     setSpeed: (speed: number) => void;
     setBottlenecks: (componentIds: string[]) => void;
     setActiveConnections: (connectionIds: string[]) => void;
+    setConnectionHealth: (healthMap: Record<string, 'good' | 'stressed' | 'failed'>) => void;
+    setConnectionReasons: (reasonsMap: Record<string, string>) => void;
     reset: () => void;
 }
 
@@ -25,6 +29,8 @@ export const useFlowAnimation = create<FlowAnimationState>((set) => ({
     speed: 1,
     bottleneckComponents: [],
     activeConnections: [],
+    connectionHealth: {},
+    connectionReasons: {},
 
     play: () => set({ isPlaying: true }),
     pause: () => set({ isPlaying: false }),
@@ -32,11 +38,15 @@ export const useFlowAnimation = create<FlowAnimationState>((set) => ({
     setSpeed: (speed) => set({ speed }),
     setBottlenecks: (componentIds) => set({ bottleneckComponents: componentIds }),
     setActiveConnections: (connectionIds) => set({ activeConnections: connectionIds }),
+    setConnectionHealth: (healthMap) => set({ connectionHealth: healthMap }),
+    setConnectionReasons: (reasonsMap) => set({ connectionReasons: reasonsMap }),
     reset: () => set({
         isPlaying: false,
         speed: 1,
         bottleneckComponents: [],
         activeConnections: [],
+        connectionHealth: {},
+        connectionReasons: {},
     }),
 }));
 

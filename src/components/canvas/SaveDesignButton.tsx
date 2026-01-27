@@ -34,7 +34,7 @@ export function SaveDesignButton({ onSave }: SaveDesignButtonProps) {
                         ? 'bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)] shadow-md'
                         : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] border border-[var(--color-border)]'
                 }
-                ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}
+                ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
             `}
         >
             {isSaving ? (

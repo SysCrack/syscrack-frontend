@@ -4,11 +4,12 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Info, MessageSquare, Code2, Sun, Moon, User, LogOut } from 'lucide-react';
+import { Info, MessageSquare, Code2, Sun, Moon, User, LogOut, HelpCircle } from 'lucide-react';
 import { InspectorPanel } from '@/components/inspector/InspectorPanel';
 import type { SystemDesignCanvasHandle } from '@/components/canvas/SystemDesignCanvas';
 import { ProblemPanel } from '@/components/problem/ProblemPanel';
 import { ComponentPalette } from '@/components/palette/ComponentPalette';
+// Mock data import removed - using backend API only
 import { fetchSystemDesignProblem, fetchSystemDesignProblemBySlug } from '@/lib/api/problems';
 import type { SystemDesignProblemDetail } from '@/lib/types/design';
 import { useUIStore } from '@/stores/uiStore';
@@ -16,9 +17,14 @@ import { useAuthStore } from '@/stores/authStore';
 import { useDesignStore } from '@/stores/designStore';
 import { RunSimulationButton } from '@/components/simulation/RunSimulationButton';
 import { ResultsPanel } from '@/components/simulation/ResultsPanel';
+import { useSimulationStore } from '@/stores/simulationStore';
+import { useSimulationStream } from '@/lib/api/simulationSocket';
 import { FlowControls } from '@/components/canvas/FlowControls';
 import { SaveDesignButton } from '@/components/canvas/SaveDesignButton';
 import { ShowResultsButton } from '@/components/simulation/ShowResultsButton';
+import { useKeyboardShortcuts } from '@/lib/hooks/useKeyboardShortcuts';
+import { useAutoSave } from '@/lib/hooks/useAutoSave';
+import { KeyboardShortcutsModal } from '@/components/ui/KeyboardShortcutsModal';
 
 // Dynamically import the canvas to avoid SSR issues with Excalidraw
 const SystemDesignCanvas = dynamic(
@@ -80,18 +86,50 @@ export default function DesignPage() {
     // Canvas State
     const [selectedElement, setSelectedElement] = useState<any>(null);
     const canvasRef = useRef<SystemDesignCanvasHandle>(null);
+    const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
 
-    // Manual Save Handler
+    // Simulation Real-time Stream
+    const currentJobId = useSimulationStore((state) => state.currentJobId);
+    useSimulationStream(currentJobId);
+
     const handleManualSave = useCallback(async () => {
         if (canvasRef.current) {
             await canvasRef.current.triggerSave();
         }
     }, []);
 
+    // Auto-save integration
+    useAutoSave(handleManualSave, 5000); // Save after 5 seconds of inactivity
+
+    // Keyboard Shortcuts integration
+    useKeyboardShortcuts({
+        onSave: handleManualSave,
+        onRun: () => {
+            // Trigger run simulation by clicking the button (simpler than refactoring RunSimulationButton)
+            const btn = document.getElementById('run-simulation-btn');
+            if (btn && !btn.hasAttribute('disabled')) {
+                (btn as HTMLButtonElement).click();
+            }
+        },
+        onToggleHelp: () => setIsShortcutsOpen(prev => !prev),
+        onEsc: () => {
+            setIsShortcutsOpen(false);
+            setSelectedElement(null);
+            useSimulationStore.getState().closeResultsPanel();
+        }
+    });
+
     // Problem data from API
     const [problem, setProblem] = useState<SystemDesignProblemDetail | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    // Initial responsive check
+    useEffect(() => {
+        if (typeof window !== 'undefined' && window.innerWidth < 768) {
+            setShowProblemPanel(false);
+        }
+    }, []);
 
     // Fetch problem data from API
     useEffect(() => {
@@ -109,7 +147,7 @@ export default function DesignPage() {
                 }
                 setProblem(data);
             } catch (err) {
-                console.error('Failed to load problem:', err);
+                console.error('Failed to load problem from API:', err);
                 setError(err instanceof Error ? err.message : 'Failed to load problem');
             } finally {
                 setIsLoading(false);
@@ -238,7 +276,7 @@ export default function DesignPage() {
                         className="flex items-center gap-2 text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors"
                     >
                         <Code2 className="h-6 w-6 text-[var(--color-primary)]" />
-                        <span className="text-lg font-semibold">Syscrack</span>
+                        <span className="text-lg font-semibold hidden sm:inline">Syscrack</span>
                     </Link>
 
                     <div className="h-6 w-px bg-[var(--color-border)]" />
@@ -266,7 +304,7 @@ export default function DesignPage() {
                 </div>
 
                 {/* Center: Problem title */}
-                <div className="absolute left-1/2 transform -translate-x-1/2 text-sm font-medium text-[var(--color-text-secondary)]">
+                <div className="absolute left-1/2 transform -translate-x-1/2 text-sm font-medium text-[var(--color-text-secondary)] hidden lg:block max-w-[30%] truncate">
                     {problem?.title || `Problem: ${problemId}`}
                 </div>
 
@@ -276,6 +314,15 @@ export default function DesignPage() {
                     <SaveStatus />
 
                     <div className="h-6 w-px bg-[var(--color-border)] opacity-50" />
+
+                    {/* Keyboard Shortcuts Help */}
+                    <button
+                        onClick={() => setIsShortcutsOpen(true)}
+                        className="p-2 rounded-lg text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)] transition-colors"
+                        aria-label="Keyboard Shortcuts"
+                    >
+                        <HelpCircle className="h-5 w-5" />
+                    </button>
 
                     {/* Theme Toggle */}
                     <button
@@ -292,13 +339,13 @@ export default function DesignPage() {
 
                     {/* User/Profile */}
                     {user ? (
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 sm:gap-2">
                             <Link
                                 href="/profile"
-                                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)] transition-colors"
+                                className="flex items-center gap-2 px-2 py-2 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)] transition-colors"
                             >
                                 <User className="h-4 w-4" />
-                                <span className="hidden sm:inline">Profile</span>
+                                <span className="hidden md:inline">Profile</span>
                             </Link>
                             <button
                                 onClick={signOut}
@@ -311,7 +358,7 @@ export default function DesignPage() {
                     ) : (
                         <Link
                             href="/auth/login"
-                            className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-surface)] rounded-lg transition-colors"
+                            className="px-3 py-1.5 sm:px-4 sm:py-2 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-surface)] rounded-lg transition-colors"
                         >
                             Sign in
                         </Link>
@@ -325,11 +372,12 @@ export default function DesignPage() {
                 {showProblemPanel && problem && (
                     <aside
                         ref={sidebarRef}
-                        className="flex-shrink-0 overflow-hidden relative group"
+                        className="flex-shrink-0 overflow-hidden relative group border-r border-[var(--color-border)] flex flex-col bg-[var(--color-panel-bg)]"
                         style={{ width: sidebarWidth }}
                     >
-                        <ProblemPanel problem={problem} className="h-full" />
-
+                        <div className="flex-1 overflow-y-auto">
+                            <ProblemPanel problem={problem} className="h-full border-r-0" />
+                        </div>
                     </aside>
                 )}
 
@@ -352,8 +400,6 @@ export default function DesignPage() {
                         />
                     </div>
 
-
-
                     {/* Inspector Panel */}
                     <InspectorPanel
                         element={selectedElement}
@@ -362,21 +408,42 @@ export default function DesignPage() {
                     />
 
                     {/* Flow Controls - Bottom Center */}
-                    <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-50">
-                        <FlowControls />
-                    </div>
+                    {(!selectedElement || typeof window !== 'undefined' && window.innerWidth >= 768) && (
+                        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-50">
+                            <FlowControls />
+                        </div>
+                    )}
 
-                    {/* Submit/Run Button - Bottom Right */}
-                    <div className="absolute bottom-16 right-4 z-50 flex items-center gap-3">
-                        <ShowResultsButton />
-                        <SaveDesignButton onSave={handleManualSave} />
-                        <RunSimulationButton />
+                    {/* Right Side Panel - Component Palette & Action Buttons */}
+                    <div className="absolute right-2 bottom-4 md:right-4 md:bottom-4 z-[60] flex flex-col items-end gap-2 md:gap-3 pointer-events-none">
+                        {/* Component Palette - Always visible, collapsible */}
+                        <div className="pointer-events-auto">
+                            <ComponentPalette
+                                floating={true}
+                                collapsed={typeof window !== 'undefined' && window.innerWidth < 1024}
+                            />
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-2 pointer-events-auto">
+                            <div className="hidden sm:block">
+                                <ShowResultsButton />
+                            </div>
+                            <SaveDesignButton onSave={handleManualSave} />
+                            <RunSimulationButton />
+                        </div>
                     </div>
                 </main>
             </div>
 
             {/* Results Panel Overlay */}
             <ResultsPanel />
+
+            {/* Keyboard Shortcuts Help Modal */}
+            <KeyboardShortcutsModal
+                isOpen={isShortcutsOpen}
+                onClose={() => setIsShortcutsOpen(false)}
+            />
         </div>
     );
 }

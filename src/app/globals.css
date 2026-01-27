@@ -5,50 +5,54 @@
   --color-primary: #6965db;
   --color-primary-hover: #5b57c9;
   --color-primary-light: #e8e7fc;
-  
+
   /* Backgrounds - warm whites */
   --color-canvas-bg: #ffffff;
-  --color-panel-bg: #fafafa;
-  --color-surface: #f5f5f5;
+  --color-panel-bg: #f8f9fa;
+  --color-surface: #f3f4f6;
+  --color-surface-elevated: #ffffff;
+  --color-surface-hover: #ebebef;
   --color-editor-bg: #ffffff;
-  
+
   /* Text */
   --color-text-primary: #1b1b1f;
   --color-text-secondary: #5c5c6d;
   --color-text-tertiary: #8e8e9a;
-  
+
   /* Status colors */
   --color-success: #20b46a;
   --color-warning: #f0a04b;
   --color-error: #e55c5c;
-  
+
   /* Difficulty badges */
   --color-easy: #20b46a;
   --color-medium: #f0a04b;
   --color-hard: #e55c5c;
   --color-premium: #6965db;
-  
+
   /* Borders and shadows - softer */
   --color-border: #e5e5e9;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
-  
+
   /* Border radius */
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-full: 9999px;
-  
+
   /* Fonts */
   --font-sans: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 [data-theme="dark"] {
-  --color-canvas-bg: #121217;
-  --color-panel-bg: #1e1e24;
-  --color-surface: #27272e;
+  --color-canvas-bg: #0f172a;
+  --color-panel-bg: #1e293b;
+  --color-surface: #334155;
+  --color-surface-elevated: #1e293b;
+  --color-surface-hover: #33333c;
   --color-editor-bg: #1e1e1e;
   --color-text-primary: #f5f5f7;
   --color-text-secondary: #a1a1aa;
