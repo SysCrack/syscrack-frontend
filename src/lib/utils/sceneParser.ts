@@ -38,6 +38,10 @@ export interface SystemConnectionData {
     isSystemConnection: true;
     protocol: Protocol;
     throughput_qps?: number;
+    data_contract?: {
+        request_format?: string;
+        response_format?: string;
+    };
 }
 
 /**
@@ -89,6 +93,7 @@ export interface ParsedDesign {
         appState?: Record<string, unknown>;
     };
     warnings: string[];
+    entryPoint?: string; // Component ID with no incoming edges (usually client)
 }
 
 /**
@@ -158,6 +163,7 @@ export function parseExcalidrawScene(
                     target_id: idMapping.get(targetExcalidrawId)!,
                     protocol: connData?.protocol || 'http',
                     throughput_qps: connData?.throughput_qps,
+                    data_contract: connData?.data_contract,
                 });
             } else if (sourceExcalidrawId || targetExcalidrawId) {
                 // ... waring logic
@@ -181,11 +187,33 @@ export function parseExcalidrawScene(
         }
     }
 
+    // Find entry point - component with no incoming edges
+    const componentsWithIncoming = new Set<string>();
+    for (const conn of connections) {
+        componentsWithIncoming.add(conn.target_id);
+    }
+
+    // Entry point is a component that has outgoing edges but no incoming edges
+    // Usually this is the 'client' component
+    let entryPoint: string | undefined;
+    for (const comp of components) {
+        // Prefer client as entry point
+        if (comp.type === 'client') {
+            entryPoint = comp.id;
+            break;
+        }
+        // Otherwise, first component with no incoming edges
+        if (!componentsWithIncoming.has(comp.id!) && connectedComponents.has(comp.id!)) {
+            entryPoint = comp.id;
+        }
+    }
+
     return {
         components,
         connections,
         canvas_data: { elements, appState },
         warnings,
+        entryPoint,
     };
 }
 

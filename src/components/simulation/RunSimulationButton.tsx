@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Play, Loader2, AlertCircle } from 'lucide-react';
+import { Play, Loader2 } from 'lucide-react';
 import { useDesignStore } from '@/stores/designStore';
 import { useSimulationStore } from '@/stores/simulationStore';
 import { useFlowAnimation } from '@/lib/hooks/useFlowAnimation';
@@ -90,34 +90,25 @@ export function RunSimulationButton() {
     const buttonText = isRunning ? `Running ${progress}%` : isSaving ? 'Saving...' : isDirty ? 'Unsaved' : 'Run Simulation';
 
     return (
-        <div className="flex items-center gap-2">
-            {/* Warning if trying to run while dirty (though disabled, tooltip helps) */}
-            {isDirty && !isSaving && (
-                <span className="text-xs text-amber-500 flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3" />
-                    Save first
-                </span>
+        <button
+            onClick={handleRun}
+            disabled={isDisabled}
+            className={`
+                flex items-center gap-2 px-5 py-2.5 rounded-lg shadow-sm
+                text-sm font-medium transition-all
+                ${isDisabled
+                    ? 'bg-[var(--color-surface)] text-[var(--color-text-tertiary)] border border-[var(--color-border)] cursor-not-allowed'
+                    : 'bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white shadow-md hover:shadow-lg cursor-pointer'
+                }
+            `}
+            title={isDirty ? 'Save your design first to run simulation' : 'Run simulation'}
+        >
+            {isRunning || isSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+                <Play className="h-4 w-4 fill-current" />
             )}
-
-            <button
-                onClick={handleRun}
-                disabled={isDisabled}
-                className={`
-                    flex items-center gap-2 px-5 py-2.5 rounded-lg shadow-sm
-                    text-sm font-medium transition-all
-                    ${isDisabled
-                        ? 'bg-[var(--color-surface)] text-[var(--color-text-tertiary)] border border-[var(--color-border)] cursor-not-allowed'
-                        : 'bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white shadow-md hover:shadow-lg'
-                    }
-                `}
-            >
-                {isRunning || isSaving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                    <Play className="h-4 w-4 fill-current" />
-                )}
-                {buttonText}
-            </button>
-        </div>
+            {buttonText}
+        </button>
     );
 }

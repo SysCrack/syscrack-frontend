@@ -17,7 +17,7 @@ export function ShowResultsButton() {
     return (
         <button
             onClick={openResultsPanel}
-            className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-primary)] transition-all shadow-sm"
+            className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-primary)] transition-all shadow-sm cursor-pointer"
         >
             <BarChart2 className="h-4 w-4" />
             Results
