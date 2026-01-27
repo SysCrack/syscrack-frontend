@@ -9,6 +9,9 @@ import { useDesignStore } from '@/stores/designStore';
 import * as designsApi from '@/lib/api/designs';
 import { parseExcalidrawScene, isSystemConnection, SystemConnectionData } from '@/lib/utils/sceneParser';
 import { DataFlowOverlay } from '@/components/canvas/DataFlowOverlay';
+import { useSimulationStore } from '@/stores/simulationStore';
+import { useFlowAnimation } from '@/lib/hooks/useFlowAnimation';
+import { SimulationStatus } from '@/lib/types/design';
 
 // Use inline type extraction from Excalidraw's API
 // Use inline type extraction from Excalidraw's API
@@ -62,10 +65,26 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
         // Store actions
         const setDesignId = useDesignStore((state) => state.setDesignId);
         const setProblemId = useDesignStore((state) => state.setProblemId);
+        const setElements = useDesignStore((state) => state.setElements);
         const markDirty = useDesignStore((state) => state.markDirty);
         const startSaving = useDesignStore((state) => state.startSaving);
         const markSaved = useDesignStore((state) => state.markSaved);
         const setSaveError = useDesignStore((state) => state.setSaveError);
+
+        // Animation state
+        const play = useFlowAnimation(state => state.play);
+        const pause = useFlowAnimation(state => state.pause);
+        const isSimulationRunning = useSimulationStore(state => state.isRunning);
+        const isSimulationCompleted = useSimulationStore(state => state.status === SimulationStatus.COMPLETED);
+
+        // Sync animation with simulation
+        useEffect(() => {
+            if (isSimulationRunning || isSimulationCompleted) {
+                play();
+            } else {
+                pause();
+            }
+        }, [isSimulationRunning, isSimulationCompleted, play, pause]);
 
         // Delay mounting Excalidraw slightly
         useEffect(() => {
@@ -188,7 +207,7 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
 
         // ... existing handleChange ...
         const handleChange = useCallback((elements: readonly ExcalidrawElement[], appState: any) => {
-            // Mark as dirty (user will manually save)
+            // Mark as dirty
             markDirty();
 
             // Support Animation Overlay
@@ -198,22 +217,19 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                 zoom: appState.zoom.value
             });
 
-            // Parse connections for overlay (debounced ideal, but simple for now)
-            // Only update if we have system connections
+            // Parse connections for animation overlay
             const connections = elements
-                .filter(el => isSystemConnection(el) && !el.isDeleted)
+                .filter(el => (el.type === 'arrow' || (el.customData as any)?.isSystemConnection) && !el.isDeleted)
                 .map(el => {
-                    const data = el.customData as unknown as SystemConnectionData;
-                    // Excalidraw linear elements have points
-                    const points = (el as any).points || [];
-                    const lastPoint = points[points.length - 1] || [0, 0];
+                    const data = (el.customData as any) || {};
+                    // Use bound elements to find start/end if protocol logic needed later
+                    const points = (el as any).points || [[0, 0], [0, 0]];
                     return {
                         id: el.id,
                         protocol: data.protocol || 'http',
                         startX: el.x,
                         startY: el.y,
-                        endX: el.x + lastPoint[0],
-                        endY: el.y + lastPoint[1],
+                        points: points,
                         throughputQps: data.throughput_qps
                     };
                 });
@@ -223,26 +239,32 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
             const selectedIds = Object.keys(appState.selectedElementIds || {});
             const singleSelectedId = selectedIds.length === 1 ? selectedIds[0] : null;
 
-            // Only notify if selection actually changed
             if (singleSelectedId !== prevSelectionIdRef.current) {
                 prevSelectionIdRef.current = singleSelectedId;
-
                 if (onSelectionChange) {
-                    if (singleSelectedId) {
-                        const el = elements.find(e => e.id === singleSelectedId);
-                        onSelectionChange(el || null);
-                    } else {
-                        onSelectionChange(null);
-                    }
+                    const el = elements.find(e => e.id === singleSelectedId);
+                    onSelectionChange(el || null);
                 }
             }
         }, [markDirty, onSelectionChange]);
+
+        // Sync initial connections when API is ready
+        useEffect(() => {
+            if (excalidrawAPIRef.current) {
+                const elements = excalidrawAPIRef.current.getSceneElements();
+                const appState = excalidrawAPIRef.current.getAppState();
+
+                // Trigger an initial "change" to populate overlay
+                handleChange(elements as any, appState);
+            }
+        }, [isReady, handleChange]);
 
 
         const handlePointerUpdate = useCallback(() => { }, []);
 
         const handleExcalidrawMount = useCallback((api: ExcalidrawImperativeAPI) => {
             excalidrawAPIRef.current = api;
+            (window as any).excalidrawAPI = api;
             console.log('Excalidraw mounted for problem:', problemId);
         }, [problemId]);
 

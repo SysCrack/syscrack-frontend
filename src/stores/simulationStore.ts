@@ -11,6 +11,7 @@ import type {
     ScenarioResult,
     GradingResult,
     EstimationComparison,
+    UserEstimates,
 } from '@/lib/types/design';
 
 interface SimulationStore {
@@ -24,6 +25,7 @@ interface SimulationStore {
     totalScore: number | null;
     gradingResult: GradingResult | null;
     estimationComparison: EstimationComparison | null;
+    userEstimates: UserEstimates | null;
     error: string | null;
 
     // UI State
@@ -36,6 +38,7 @@ interface SimulationStore {
     setError: (error: string) => void;
     openResultsPanel: () => void;
     closeResultsPanel: () => void;
+    setUserEstimates: (estimates: UserEstimates | null) => void;
     reset: () => void;
 }
 
@@ -51,6 +54,7 @@ export const useSimulationStore = create<SimulationStore>()(
         totalScore: null,
         gradingResult: null,
         estimationComparison: null,
+        userEstimates: null,
         error: null,
         isResultsPanelOpen: false,
 
@@ -98,6 +102,10 @@ export const useSimulationStore = create<SimulationStore>()(
             state.isResultsPanelOpen = false;
         }),
 
+        setUserEstimates: (estimates) => set((state) => {
+            state.userEstimates = estimates;
+        }),
+
         reset: () => set((state) => {
             state.isRunning = false;
             state.currentJobId = null;
@@ -108,6 +116,7 @@ export const useSimulationStore = create<SimulationStore>()(
             state.totalScore = null;
             state.gradingResult = null;
             state.estimationComparison = null;
+            state.userEstimates = null;
             state.error = null;
             state.isResultsPanelOpen = false;
         }),

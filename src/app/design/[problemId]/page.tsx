@@ -17,6 +17,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { useDesignStore } from '@/stores/designStore';
 import { RunSimulationButton } from '@/components/simulation/RunSimulationButton';
 import { ResultsPanel } from '@/components/simulation/ResultsPanel';
+import { useSimulationStore } from '@/stores/simulationStore';
+import { useSimulationStream } from '@/lib/api/simulationSocket';
 import { FlowControls } from '@/components/canvas/FlowControls';
 import { SaveDesignButton } from '@/components/canvas/SaveDesignButton';
 import { ShowResultsButton } from '@/components/simulation/ShowResultsButton';
@@ -81,6 +83,10 @@ export default function DesignPage() {
     // Canvas State
     const [selectedElement, setSelectedElement] = useState<any>(null);
     const canvasRef = useRef<SystemDesignCanvasHandle>(null);
+
+    // Simulation Real-time Stream
+    const currentJobId = useSimulationStore((state) => state.currentJobId);
+    useSimulationStream(currentJobId);
 
     // Manual Save Handler
     const handleManualSave = useCallback(async () => {
