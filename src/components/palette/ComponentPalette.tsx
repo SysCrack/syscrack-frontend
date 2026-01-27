@@ -47,7 +47,7 @@ export function ComponentPalette({
     };
 
     const floatingClasses = floating
-        ? 'bg-[var(--color-surface)] rounded-lg shadow-lg border border-[var(--color-border)] p-3'
+        ? 'bg-[var(--color-surface)] rounded-lg shadow-lg border border-[var(--color-border)] p-2 md:p-3'
         : 'relative w-full border-t border-[var(--color-border)] bg-[var(--color-panel-bg)] p-4';
 
     return (
@@ -55,8 +55,9 @@ export function ComponentPalette({
             className={`
         ${floatingClasses}
         flex flex-col
-        max-h-[70vh]
-        transition-transform duration-200 ease-in-out
+        w-40 md:w-48
+        max-h-[50vh] md:max-h-[70vh]
+        transition-all duration-200 ease-in-out
         ${className}
       `}
         >

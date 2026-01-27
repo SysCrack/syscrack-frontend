@@ -60,7 +60,9 @@ export function InspectorPanel({ element, onUpdate, onClose }: InspectorPanelPro
     };
 
     return (
-        <div className="absolute top-20 right-4 z-[55] w-72 bg-[var(--color-panel-bg)] border border-[var(--color-border)] rounded-xl shadow-2xl flex flex-col max-h-[calc(100vh-120px)] animate-in slide-in-from-right-10 fade-in duration-200 overflow-hidden">
+        <div className="fixed md:absolute bottom-0 left-0 right-0 md:bottom-auto md:left-auto md:top-20 md:right-4 z-[55] w-full md:w-72 bg-[var(--color-panel-bg)] border-t md:border border-[var(--color-border)] rounded-t-2xl md:rounded-xl shadow-2xl flex flex-col max-h-[70vh] md:max-h-[calc(100vh-120px)] animate-in slide-in-from-bottom md:slide-in-from-right-10 fade-in duration-200 overflow-hidden">
+            {/* Mobile Drag Handle */}
+            <div className="md:hidden w-12 h-1 bg-[var(--color-border)] rounded-full mx-auto mt-3 mb-1 flex-shrink-0" />
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                 <div className="flex items-center gap-3">

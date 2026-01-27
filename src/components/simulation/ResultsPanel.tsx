@@ -526,8 +526,8 @@ export function ResultsPanel() {
                         <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Simulation Results</h2>
                         {totalScore !== null && (
                             <span className={`px-3 py-1 rounded-full text-sm font-bold border ${(gradingResult?.checks.some(c => !c.passed))
-                                    ? 'bg-red-500/10 text-red-500 border-red-500/30'
-                                    : getScoreColorClass(totalScore)
+                                ? 'bg-red-500/10 text-red-500 border-red-500/30'
+                                : getScoreColorClass(totalScore)
                                 }`}>
                                 Score: {totalScore}/100
                             </span>
@@ -541,7 +541,7 @@ export function ResultsPanel() {
 
     // Full Results State
     return (
-        <div className="fixed bottom-0 left-0 right-0 h-[520px] bg-[var(--color-panel-bg)] border-t border-[var(--color-border)] shadow-2xl z-[70] flex flex-col transition-all duration-300">
+        <div className="fixed bottom-0 left-0 right-0 h-[85vh] md:h-[520px] bg-[var(--color-panel-bg)] border-t border-[var(--color-border)] shadow-2xl z-[70] flex flex-col transition-all duration-300">
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                 <div className="flex items-center gap-4">

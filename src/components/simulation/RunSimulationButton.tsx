@@ -209,6 +209,7 @@ export function RunSimulationButton() {
     return (
         <>
             <button
+                id="run-simulation-btn"
                 onClick={handleRun}
                 disabled={isDisabled}
                 className={`
