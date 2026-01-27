@@ -9,7 +9,7 @@ import { InspectorPanel } from '@/components/inspector/InspectorPanel';
 import type { SystemDesignCanvasHandle } from '@/components/canvas/SystemDesignCanvas';
 import { ProblemPanel } from '@/components/problem/ProblemPanel';
 import { ComponentPalette } from '@/components/palette/ComponentPalette';
-import { getProblemBySlug } from '@/lib/data/mockProblems';
+// Mock data import removed - using backend API only
 import { fetchSystemDesignProblem, fetchSystemDesignProblemBySlug } from '@/lib/api/problems';
 import type { SystemDesignProblemDetail } from '@/lib/types/design';
 import { useUIStore } from '@/stores/uiStore';
@@ -110,27 +110,8 @@ export default function DesignPage() {
                 }
                 setProblem(data);
             } catch (err) {
-                console.error('Failed to load from API, trying mock data:', err);
-                // Fallback to mock data
-                const mockProblem = getProblemBySlug(problemId);
-                if (mockProblem) {
-                    // Map SystemDesignProblem (mock) to SystemDesignProblemDetail (expected by state)
-                    const mappedProblem: SystemDesignProblemDetail = {
-                        id: mockProblem.id,
-                        title: mockProblem.title,
-                        slug: mockProblem.slug,
-                        difficulty: mockProblem.difficulty,
-                        is_premium_only: mockProblem.is_premium_only,
-                        description: mockProblem.description,
-                        definition: mockProblem.definition,
-                        requirements: {}, // Standard empty requirements
-                        test_scenarios: [],
-                        api_endpoints: []
-                    };
-                    setProblem(mappedProblem);
-                } else {
-                    setError(err instanceof Error ? err.message : 'Failed to load problem');
-                }
+                console.error('Failed to load problem from API:', err);
+                setError(err instanceof Error ? err.message : 'Failed to load problem');
             } finally {
                 setIsLoading(false);
             }
@@ -341,7 +322,7 @@ export default function DesignPage() {
 
             {/* Main Content */}
             <div className="flex flex-1 overflow-hidden">
-                {/* Left Panel - Problem Description & Components */}
+                {/* Left Panel - Problem Description */}
                 {showProblemPanel && problem && (
                     <aside
                         ref={sidebarRef}
@@ -351,9 +332,6 @@ export default function DesignPage() {
                         <div className="flex-1 overflow-y-auto">
                             <ProblemPanel problem={problem} className="h-full border-r-0" />
                         </div>
-
-                        {/* Integrated Component Palette */}
-                        <ComponentPalette floating={false} />
                     </aside>
                 )}
 
@@ -367,9 +345,6 @@ export default function DesignPage() {
 
                 {/* Right Panel - Canvas Area */}
                 <main className="flex-1 relative overflow-hidden isolate">
-                    {/* Component Palette - Floating (only if sidebar is closed) */}
-                    {!showProblemPanel && <ComponentPalette floating={true} />}
-
                     {/* Excalidraw Canvas - contained with isolation */}
                     <div className="absolute inset-0 overflow-hidden">
                         <SystemDesignCanvas
@@ -378,8 +353,6 @@ export default function DesignPage() {
                             onSelectionChange={handleSelectionChange}
                         />
                     </div>
-
-
 
                     {/* Inspector Panel */}
                     <InspectorPanel
@@ -393,11 +366,17 @@ export default function DesignPage() {
                         <FlowControls />
                     </div>
 
-                    {/* Submit/Run Button - Bottom Right */}
-                    <div className="absolute bottom-16 right-4 z-50 flex items-center gap-3">
-                        <ShowResultsButton />
-                        <SaveDesignButton onSave={handleManualSave} />
-                        <RunSimulationButton />
+                    {/* Right Side Panel - Component Palette & Action Buttons */}
+                    <div className="absolute right-4 bottom-4 z-[60] flex flex-col items-end gap-3">
+                        {/* Component Palette - Always visible, collapsible */}
+                        <ComponentPalette floating={true} />
+
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-2">
+                            <ShowResultsButton />
+                            <SaveDesignButton onSave={handleManualSave} />
+                            <RunSimulationButton />
+                        </div>
                     </div>
                 </main>
             </div>

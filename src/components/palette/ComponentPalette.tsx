@@ -47,7 +47,7 @@ export function ComponentPalette({
     };
 
     const floatingClasses = floating
-        ? 'absolute right-4 bottom-24 z-[60] bg-[var(--color-surface)] rounded-lg shadow-lg border border-[var(--color-border)] p-3'
+        ? 'bg-[var(--color-surface)] rounded-lg shadow-lg border border-[var(--color-border)] p-3'
         : 'relative w-full border-t border-[var(--color-border)] bg-[var(--color-panel-bg)] p-4';
 
     return (

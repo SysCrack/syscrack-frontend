@@ -3,7 +3,6 @@
 import { useCallback, useRef, forwardRef, useImperativeHandle, useState, useEffect } from 'react';
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
-import { ComponentPalette } from '@/components/palette/ComponentPalette';
 import { useCanvasDrop } from '@/lib/hooks/useCanvasDrop';
 import { useUIStore } from '@/stores/uiStore';
 import { useDesignStore } from '@/stores/designStore';
@@ -186,8 +185,6 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
         // Track previous selection to avoid unnecessary updates
         const prevSelectionIdRef = useRef<string | null>(null);
 
-        // Palette state
-        const [paletteCollapsed, setPaletteCollapsed] = useState(false);
 
         // ... existing handleChange ...
         const handleChange = useCallback((elements: readonly ExcalidrawElement[], appState: any) => {
@@ -230,11 +227,6 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
             if (singleSelectedId !== prevSelectionIdRef.current) {
                 prevSelectionIdRef.current = singleSelectedId;
 
-                // Auto-collapse palette when selecting a component (inspector opens)
-                if (singleSelectedId) {
-                    setPaletteCollapsed(true);
-                }
-
                 if (onSelectionChange) {
                     if (singleSelectedId) {
                         const el = elements.find(e => e.id === singleSelectedId);
@@ -246,13 +238,6 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
             }
         }, [markDirty, onSelectionChange]);
 
-        // ... (lines 169-230)
-
-        {/* Component Palette */ }
-        <ComponentPalette
-            collapsed={paletteCollapsed}
-            onToggle={setPaletteCollapsed}
-        />
 
         const handlePointerUpdate = useCallback(() => { }, []);
 
@@ -318,12 +303,6 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                         display: none !important;
                     }
                 `}</style>
-
-                {/* Component Palette */}
-                <ComponentPalette
-                    collapsed={paletteCollapsed}
-                    onToggle={setPaletteCollapsed}
-                />
 
                 {/* Excalidraw Canvas */}
                 <Excalidraw
