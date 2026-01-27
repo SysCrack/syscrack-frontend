@@ -25,7 +25,7 @@ export function NumberField({ label, value, onChange, min = 0, max, unit, helpTe
             </div>
             <input
                 type="number"
-                value={value}
+                value={value ?? min ?? 0}
                 min={min}
                 max={max}
                 onChange={(e) => onChange(Number(e.target.value))}
