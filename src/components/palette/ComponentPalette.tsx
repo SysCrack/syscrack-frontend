@@ -5,8 +5,9 @@
  * 
  * Simple v1 implementation with emoji + text buttons.
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
+import { useDesignStore } from '@/stores/designStore';
 import { COMPONENT_TEMPLATES, type ComponentTemplate } from '@/lib/templates/componentTemplates';
 
 interface ComponentPaletteProps {
@@ -24,7 +25,22 @@ export function ComponentPalette({
 }: ComponentPaletteProps) {
     const [isCollapsedLocal, setIsCollapsedLocal] = useState(false);
 
+    // Subscribe to design store selection to auto-collapse
+    const selectedElementId = useDesignStore((state) => state.selectedElementId);
+
     const isCollapsed = collapsed !== undefined ? collapsed : isCollapsedLocal;
+
+    // Auto-collapse when an element is selected (inspector opens)
+    useEffect(() => {
+        if (selectedElementId) {
+            if (onToggle) {
+                onToggle(true);
+            } else {
+                setIsCollapsedLocal(true);
+            }
+        }
+    }, [selectedElementId, onToggle]);
+
     const handleToggle = () => {
         const newState = !isCollapsed;
         if (onToggle) {

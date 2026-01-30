@@ -156,9 +156,12 @@ export default function DesignPage() {
         loadProblem();
     }, [problemId]);
 
+    const selectElement = useDesignStore((state) => state.selectElement);
+
     const handleSelectionChange = useCallback((element: any) => {
         setSelectedElement(element);
-    }, []);
+        selectElement(element ? element.id : null);
+    }, [selectElement]);
 
     const handleConfigUpdate = useCallback((elementId: string, newConfig: Record<string, unknown>) => {
         const api = canvasRef.current?.getExcalidrawAPI();
@@ -191,6 +194,7 @@ export default function DesignPage() {
     // Resizing State
     const [sidebarWidth, setSidebarWidth] = useState(320);
     const [isResizing, setIsResizing] = useState(false);
+    const [isPaletteCollapsed, setIsPaletteCollapsed] = useState(false);
     const sidebarRef = useRef<HTMLDivElement>(null);
 
     const startResizing = useCallback(() => {
@@ -218,6 +222,18 @@ export default function DesignPage() {
             window.removeEventListener("mouseup", stopResizing);
         };
     }, [resize, stopResizing]);
+
+    // Responsive initialization
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            if (window.innerWidth < 768) {
+                setShowProblemPanel(false);
+            }
+            if (window.innerWidth < 1024) {
+                setIsPaletteCollapsed(true);
+            }
+        }
+    }, []);
 
     // Loading state
     if (isLoading) {
@@ -376,7 +392,11 @@ export default function DesignPage() {
                         style={{ width: sidebarWidth }}
                     >
                         <div className="flex-1 overflow-y-auto">
-                            <ProblemPanel problem={problem} className="h-full border-r-0" />
+                            <ProblemPanel
+                                problem={problem}
+                                className="h-full border-r-0"
+                                onClose={() => setShowProblemPanel(false)}
+                            />
                         </div>
                     </aside>
                 )}
@@ -420,7 +440,8 @@ export default function DesignPage() {
                         <div className="pointer-events-auto">
                             <ComponentPalette
                                 floating={true}
-                                collapsed={typeof window !== 'undefined' && window.innerWidth < 1024}
+                                collapsed={isPaletteCollapsed}
+                                onToggle={setIsPaletteCollapsed}
                             />
                         </div>
 

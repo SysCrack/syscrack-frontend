@@ -4,7 +4,7 @@ import { useState } from 'react';
 import {
     X, CheckCircle, XCircle, AlertTriangle, TrendingUp, Activity,
     DollarSign, Clock, ChevronUp, ChevronDown, Lightbulb, RotateCcw,
-    Crown, ArrowRight, Zap
+    Crown, ArrowRight, Zap, BookOpen
 } from 'lucide-react';
 import { useSimulationStore } from '@/stores/simulationStore';
 import { useFlowAnimation } from '@/lib/hooks/useFlowAnimation';
@@ -13,6 +13,8 @@ import { SimulationStatus } from '@/lib/types/design';
 import type { ScenarioResult, EstimationComparison, MetricComparison } from '@/lib/types/design';
 import { isSystemComponent, isSystemConnection } from '@/lib/types/components';
 import { useEffect } from 'react';
+import { GradingPanel } from '@/components/results/GradingPanel';
+import { gradeDesign } from '@/lib/api/designs';
 
 interface FeedbackItem {
     type: 'success' | 'warning' | 'error' | 'suggestion';
@@ -298,6 +300,7 @@ function BottleneckDisplay({ bottlenecks, spof }: { bottlenecks: string[]; spof:
 export function ResultsPanel() {
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [expandedScenario, setExpandedScenario] = useState<number | null>(0);
+    const [activeTab, setActiveTab] = useState<'simulation' | 'grading'>('simulation');
 
     const isResultsPanelOpen = useSimulationStore((state) => state.isResultsPanelOpen);
     const closeResultsPanel = useSimulationStore((state) => state.closeResultsPanel);
@@ -310,10 +313,36 @@ export function ResultsPanel() {
     const progress = useSimulationStore((state) => state.progress);
     const currentScenario = useSimulationStore((state) => state.currentScenario);
     const error = useSimulationStore((state) => state.error);
+    const conceptGrading = useSimulationStore((state) => state.conceptGrading);
+    const isLoadingConceptGrading = useSimulationStore((state) => state.isLoadingConceptGrading);
+    const setConceptGrading = useSimulationStore((state) => state.setConceptGrading);
+    const setLoadingConceptGrading = useSimulationStore((state) => state.setLoadingConceptGrading);
+
+    const designId = useDesignStore((state) => state.currentDesignId);
 
     const setBottlenecks = useFlowAnimation((state) => state.setBottlenecks);
     const setConnectionHealth = useFlowAnimation((state) => state.setConnectionHealth);
     const setConnectionReasons = useFlowAnimation((state) => state.setConnectionReasons);
+
+    // Fetch concept grading when switching to grading tab
+    const fetchConceptGrading = async () => {
+        if (!designId || conceptGrading || isLoadingConceptGrading) return;
+
+        setLoadingConceptGrading(true);
+        try {
+            const result = await gradeDesign(designId);
+            setConceptGrading(result);
+        } catch (err) {
+            console.error('Failed to fetch concept grading:', err);
+            setLoadingConceptGrading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'grading' && !conceptGrading && !isLoadingConceptGrading && designId) {
+            fetchConceptGrading();
+        }
+    }, [activeTab, conceptGrading, isLoadingConceptGrading, designId]);
 
     useEffect(() => {
         if (status === SimulationStatus.COMPLETED && results && results.length > 0) {
@@ -517,23 +546,21 @@ export function ResultsPanel() {
     // Collapsed state
     if (isCollapsed) {
         return (
-            <div className="fixed bottom-0 left-0 right-0 bg-[var(--color-panel-bg)] border-t border-[var(--color-border)] shadow-2xl z-[70] transition-all duration-300">
+            <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[70] transition-all duration-300">
                 <button
                     onClick={() => setIsCollapsed(false)}
-                    className="w-full px-6 py-3 flex items-center justify-between hover:bg-[var(--color-surface)] transition-colors"
+                    className="flex items-center gap-4 bg-[var(--color-panel-bg)] border border-[var(--color-border)] shadow-xl rounded-full px-6 py-3 hover:bg-[var(--color-surface)] transition-all transform hover:-translate-y-1"
                 >
-                    <div className="flex items-center gap-4">
-                        <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Simulation Results</h2>
-                        {totalScore !== null && (
-                            <span className={`px-3 py-1 rounded-full text-sm font-bold border ${(gradingResult?.checks.some(c => !c.passed))
-                                ? 'bg-red-500/10 text-red-500 border-red-500/30'
-                                : getScoreColorClass(totalScore)
-                                }`}>
-                                Score: {totalScore}/100
-                            </span>
-                        )}
-                    </div>
-                    <ChevronUp className="h-5 w-5 text-[var(--color-text-tertiary)]" />
+                    <h2 className="text-sm font-bold text-[var(--color-text-primary)]">Simulation Results</h2>
+                    {totalScore !== null && (
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold border ${(gradingResult?.checks.some(c => !c.passed))
+                            ? 'bg-red-500/10 text-red-500 border-red-500/30'
+                            : getScoreColorClass(totalScore)
+                            }`}>
+                            {totalScore}/100
+                        </span>
+                    )}
+                    <ChevronUp className="h-4 w-4 text-[var(--color-text-tertiary)]" />
                 </button>
             </div>
         );
@@ -545,7 +572,33 @@ export function ResultsPanel() {
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                 <div className="flex items-center gap-4">
-                    <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Simulation Results</h2>
+                    {/* Tab buttons */}
+                    <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] rounded-lg p-1">
+                        <button
+                            onClick={() => setActiveTab('simulation')}
+                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'simulation'
+                                ? 'bg-[var(--color-surface)] text-[var(--color-text-primary)] shadow-sm'
+                                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                                }`}
+                        >
+                            <span className="flex items-center gap-1.5">
+                                <Activity className="h-4 w-4" />
+                                Simulation
+                            </span>
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('grading')}
+                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'grading'
+                                ? 'bg-[var(--color-surface)] text-[var(--color-text-primary)] shadow-sm'
+                                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                                }`}
+                        >
+                            <span className="flex items-center gap-1.5">
+                                <BookOpen className="h-4 w-4" />
+                                Concept Grading
+                            </span>
+                        </button>
+                    </div>
                     {totalScore !== null && (
                         <span className={`px-3 py-1 rounded-full text-sm font-bold border ${(gradingResult?.checks.some(c => !c.passed))
                             ? 'bg-red-500/10 text-red-500 border-red-500/30'
@@ -575,164 +628,182 @@ export function ResultsPanel() {
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto p-6">
-                <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-                    {/* Left Column: Scenarios */}
-                    <div className="lg:col-span-2 space-y-4">
-                        <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">Scenarios</h3>
-
-                        {results?.map((res, idx) => (
-                            <div
-                                key={idx}
-                                className="bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border)] overflow-hidden"
-                            >
-                                {/* Scenario Header */}
-                                <button
-                                    onClick={() => setExpandedScenario(expandedScenario === idx ? null : idx)}
-                                    className="w-full px-4 py-3 flex items-center justify-between hover:bg-[var(--color-surface)] transition-colors"
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <ScenarioStatusIcon result={res} />
-                                        <h4 className="font-medium text-[var(--color-text-primary)]">
-                                            {res.scenario.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                                        </h4>
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-sm font-mono text-[var(--color-text-tertiary)]">
-                                            {res.score}/{res.max_score} pts
-                                        </span>
-                                        {expandedScenario === idx ? (
-                                            <ChevronUp className="h-4 w-4 text-[var(--color-text-tertiary)]" />
-                                        ) : (
-                                            <ChevronDown className="h-4 w-4 text-[var(--color-text-tertiary)]" />
-                                        )}
-                                    </div>
-                                </button>
-
-                                {/* Expanded Content */}
-                                {expandedScenario === idx && (
-                                    <div className="px-4 pb-4 border-t border-[var(--color-border)]">
-                                        <MetricsTable metrics={res.metrics} />
-                                        {res.feedback && res.feedback.length > 0 && (
-                                            <FeedbackList feedback={res.feedback} />
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-
-                        {/* Bottlenecks & SPOFs */}
-                        <BottleneckDisplay bottlenecks={uniqueBottlenecks} spof={uniqueSpof} />
+                {/* Grading Tab Content */}
+                {activeTab === 'grading' && (
+                    <div className="max-w-4xl mx-auto">
+                        <GradingPanel
+                            grading={conceptGrading}
+                            isLoading={isLoadingConceptGrading}
+                        />
+                        {!conceptGrading && !isLoadingConceptGrading && !designId && (
+                            <p className="text-center text-[var(--color-text-secondary)] py-8">
+                                Save your design to get concept-based feedback.
+                            </p>
+                        )}
                     </div>
+                )}
 
-                    {/* Right Column: Grading & Actions */}
-                    <div className="space-y-4">
-                        {/* Requirements Grading */}
-                        {gradingResult && (
-                            <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 border border-[var(--color-border)]">
-                                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-3">
-                                    Requirements Check
-                                </h3>
-                                <div className="space-y-2">
-                                    {gradingResult.checks.map((check, idx) => (
-                                        <div key={idx} className="flex items-center justify-between text-sm p-2 rounded hover:bg-[var(--color-surface)] transition-colors">
-                                            <span className="text-[var(--color-text-primary)] truncate mr-2" title={check.details}>{check.requirement}</span>
-                                            {check.passed ? (
-                                                <span className="text-green-500 flex items-center gap-1 text-xs font-medium bg-green-500/10 px-2 py-0.5 rounded flex-shrink-0">
-                                                    <CheckCircle className="h-3 w-3" /> Pass
-                                                </span>
+                {/* Simulation Tab Content */}
+                {activeTab === 'simulation' && (
+                    <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                        {/* Left Column: Scenarios */}
+                        <div className="lg:col-span-2 space-y-4">
+                            <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">Scenarios</h3>
+
+                            {results?.map((res, idx) => (
+                                <div
+                                    key={idx}
+                                    className="bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border)] overflow-hidden"
+                                >
+                                    {/* Scenario Header */}
+                                    <button
+                                        onClick={() => setExpandedScenario(expandedScenario === idx ? null : idx)}
+                                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-[var(--color-surface)] transition-colors"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <ScenarioStatusIcon result={res} />
+                                            <h4 className="font-medium text-[var(--color-text-primary)]">
+                                                {res.scenario.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                                            </h4>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-sm font-mono text-[var(--color-text-tertiary)]">
+                                                {res.score}/{res.max_score} pts
+                                            </span>
+                                            {expandedScenario === idx ? (
+                                                <ChevronUp className="h-4 w-4 text-[var(--color-text-tertiary)]" />
                                             ) : (
-                                                <span className="text-red-500 flex items-center gap-1 text-xs font-medium bg-red-500/10 px-2 py-0.5 rounded flex-shrink-0">
-                                                    <XCircle className="h-3 w-3" /> Fail
-                                                </span>
+                                                <ChevronDown className="h-4 w-4 text-[var(--color-text-tertiary)]" />
                                             )}
                                         </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+                                    </button>
 
-                        {/* Estimation Accuracy */}
-                        {estimationComparison && (
-                            <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 border border-[var(--color-border)]">
-                                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">
-                                    Estimation Accuracy
-                                </h3>
-                                <div className="flex items-center justify-between mb-3">
-                                    <div className="flex items-baseline gap-1">
-                                        <span className="text-3xl font-bold text-[var(--color-primary)]">
-                                            {estimationComparison.accuracy_score}%
-                                        </span>
-                                        <span className="text-xs text-[var(--color-text-tertiary)] uppercase font-bold letter-spacing-[0.05em]">Accuracy Score</span>
-                                    </div>
-
-                                    {estimationComparison.bonus_points > 0 && (
-                                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 text-amber-500 rounded-full border border-amber-500/20 animate-pulse">
-                                            <Crown className="h-4 w-4" />
-                                            <span className="text-xs font-bold">+{estimationComparison.bonus_points} Bonus Points</span>
+                                    {/* Expanded Content */}
+                                    {expandedScenario === idx && (
+                                        <div className="px-4 pb-4 border-t border-[var(--color-border)]">
+                                            <MetricsTable metrics={res.metrics} />
+                                            {res.feedback && res.feedback.length > 0 && (
+                                                <FeedbackList feedback={res.feedback} />
+                                            )}
                                         </div>
                                     )}
                                 </div>
-                                <div className="h-2 w-full bg-[var(--color-border)] rounded-full overflow-hidden mb-6">
-                                    <div
-                                        className="h-full bg-gradient-to-r from-[var(--color-primary)] to-[var(--color-primary-light)] rounded-full transition-all duration-1000"
-                                        style={{ width: `${estimationComparison.accuracy_score}%` }}
-                                    />
-                                </div>
+                            ))}
 
-                                <div className="mt-6 space-y-4">
-                                    <ComparisonRow
-                                        label="Throughput"
-                                        comparison={estimationComparison.throughput}
-                                        unit=" QPS"
-                                    />
-                                    <ComparisonRow
-                                        label="P99 Latency"
-                                        comparison={estimationComparison.latency}
-                                        unit="ms"
-                                    />
-                                    <ComparisonRow
-                                        label="Monthly Cost"
-                                        comparison={estimationComparison.cost}
-                                        unit="$"
-                                    />
-                                </div>
+                            {/* Bottlenecks & SPOFs */}
+                            <BottleneckDisplay bottlenecks={uniqueBottlenecks} spof={uniqueSpof} />
+                        </div>
 
-                                {estimationComparison.bonus_points > 0 && (
-                                    <p className="text-xs text-green-500 mt-4 text-center font-medium bg-green-500/10 py-1 rounded-full">
-                                        +{estimationComparison.bonus_points} bonus points awarded!
-                                    </p>
-                                )}
+                        {/* Right Column: Grading & Actions */}
+                        <div className="space-y-4">
+                            {/* Requirements Grading */}
+                            {gradingResult && (
+                                <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 border border-[var(--color-border)]">
+                                    <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-3">
+                                        Requirements Check
+                                    </h3>
+                                    <div className="space-y-2">
+                                        {gradingResult.checks.map((check, idx) => (
+                                            <div key={idx} className="flex items-center justify-between text-sm p-2 rounded hover:bg-[var(--color-surface)] transition-colors">
+                                                <span className="text-[var(--color-text-primary)] truncate mr-2" title={check.details}>{check.requirement}</span>
+                                                {check.passed ? (
+                                                    <span className="text-green-500 flex items-center gap-1 text-xs font-medium bg-green-500/10 px-2 py-0.5 rounded flex-shrink-0">
+                                                        <CheckCircle className="h-3 w-3" /> Pass
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-red-500 flex items-center gap-1 text-xs font-medium bg-red-500/10 px-2 py-0.5 rounded flex-shrink-0">
+                                                        <XCircle className="h-3 w-3" /> Fail
+                                                    </span>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Estimation Accuracy */}
+                            {estimationComparison && (
+                                <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 border border-[var(--color-border)]">
+                                    <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">
+                                        Estimation Accuracy
+                                    </h3>
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-baseline gap-1">
+                                            <span className="text-3xl font-bold text-[var(--color-primary)]">
+                                                {estimationComparison.accuracy_score}%
+                                            </span>
+                                            <span className="text-xs text-[var(--color-text-tertiary)] uppercase font-bold letter-spacing-[0.05em]">Accuracy Score</span>
+                                        </div>
+
+                                        {estimationComparison.bonus_points > 0 && (
+                                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 text-amber-500 rounded-full border border-amber-500/20 animate-pulse">
+                                                <Crown className="h-4 w-4" />
+                                                <span className="text-xs font-bold">+{estimationComparison.bonus_points} Bonus Points</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="h-2 w-full bg-[var(--color-border)] rounded-full overflow-hidden mb-6">
+                                        <div
+                                            className="h-full bg-gradient-to-r from-[var(--color-primary)] to-[var(--color-primary-light)] rounded-full transition-all duration-1000"
+                                            style={{ width: `${estimationComparison.accuracy_score}%` }}
+                                        />
+                                    </div>
+
+                                    <div className="mt-6 space-y-4">
+                                        <ComparisonRow
+                                            label="Throughput"
+                                            comparison={estimationComparison.throughput}
+                                            unit=" QPS"
+                                        />
+                                        <ComparisonRow
+                                            label="P99 Latency"
+                                            comparison={estimationComparison.latency}
+                                            unit="ms"
+                                        />
+                                        <ComparisonRow
+                                            label="Monthly Cost"
+                                            comparison={estimationComparison.cost}
+                                            unit="$"
+                                        />
+                                    </div>
+
+                                    {estimationComparison.bonus_points > 0 && (
+                                        <p className="text-xs text-green-500 mt-4 text-center font-medium bg-green-500/10 py-1 rounded-full">
+                                            +{estimationComparison.bonus_points} bonus points awarded!
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Action Buttons */}
+                            <div className="space-y-2">
+                                <button
+                                    onClick={() => { reset(); closeResultsPanel(); }}
+                                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)] transition-colors font-medium"
+                                >
+                                    <RotateCcw className="h-4 w-4" />
+                                    Try Again
+                                </button>
+
+                                <button
+                                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:opacity-90 transition-opacity font-medium"
+                                    title="Available with Premium"
+                                >
+                                    <Crown className="h-4 w-4" />
+                                    View Optimal Solution
+                                </button>
+
+                                <button
+                                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--color-surface)] text-[var(--color-text-primary)] border border-[var(--color-border)] rounded-lg hover:bg-[var(--color-bg-secondary)] transition-colors font-medium"
+                                >
+                                    Next Problem
+                                    <ArrowRight className="h-4 w-4" />
+                                </button>
                             </div>
-                        )}
-
-                        {/* Action Buttons */}
-                        <div className="space-y-2">
-                            <button
-                                onClick={() => { reset(); closeResultsPanel(); }}
-                                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)] transition-colors font-medium"
-                            >
-                                <RotateCcw className="h-4 w-4" />
-                                Try Again
-                            </button>
-
-                            <button
-                                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:opacity-90 transition-opacity font-medium"
-                                title="Available with Premium"
-                            >
-                                <Crown className="h-4 w-4" />
-                                View Optimal Solution
-                            </button>
-
-                            <button
-                                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--color-surface)] text-[var(--color-text-primary)] border border-[var(--color-border)] rounded-lg hover:bg-[var(--color-bg-secondary)] transition-colors font-medium"
-                            >
-                                Next Problem
-                                <ArrowRight className="h-4 w-4" />
-                            </button>
                         </div>
                     </div>
-                </div>
+                )}
             </div>
         </div>
     );

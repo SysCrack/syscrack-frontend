@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Lock } from "lucide-react";
+import { ChevronDown, ChevronRight, Lock, ChevronLeft } from "lucide-react";
 import { Badge } from "@/components/ui";
 import { cn } from "@/lib/utils/cn";
 import type { SystemDesignProblemDetail, ProblemDefinition } from "@/lib/types/design";
@@ -9,6 +9,7 @@ import type { SystemDesignProblemDetail, ProblemDefinition } from "@/lib/types/d
 interface ProblemPanelProps {
   problem: SystemDesignProblemDetail;
   className?: string;
+  onClose?: () => void;
 }
 
 interface CollapsibleSectionProps {
@@ -65,7 +66,7 @@ function BulletList({ items }: { items: string[] }) {
   );
 }
 
-export function ProblemPanel({ problem, className }: ProblemPanelProps) {
+export function ProblemPanel({ problem, className, onClose }: ProblemPanelProps) {
   const definition = problem.definition;
 
   return (
@@ -77,10 +78,23 @@ export function ProblemPanel({ problem, className }: ProblemPanelProps) {
     >
       {/* Header */}
       <div className="flex-shrink-0 px-4 py-4 border-b border-[var(--color-border)]">
-        {/* Title */}
-        <h1 className="text-lg font-bold text-[var(--color-text-primary)] leading-tight mb-2">
-          {problem.title}
-        </h1>
+        <div className="flex items-start justify-between gap-2 mb-2">
+          {/* Title */}
+          <h1 className="text-lg font-bold text-[var(--color-text-primary)] leading-tight">
+            {problem.title}
+          </h1>
+
+          {/* Close Button */}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1 hover:bg-[var(--color-bg-secondary)] rounded-md text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+              title="Collapse Panel"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+          )}
+        </div>
 
         {/* Badges */}
         <div className="flex flex-wrap items-center gap-2">

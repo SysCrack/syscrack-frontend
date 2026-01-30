@@ -292,3 +292,47 @@ export interface SystemDesignProblemDetail extends SystemDesignProblemList {
     test_scenarios: string[];
     hints?: string[];
 }
+
+// ============ Concept Grading Types ============
+
+export interface ConceptFeedbackItem {
+    rule_id: string;
+    category: string;
+    severity: 'critical' | 'error' | 'warning' | 'info';
+    message: string;
+    penalty: number;
+}
+
+export interface TradeOffIssue {
+    component: string;
+    issue: string;
+    suggestion: string;
+}
+
+export interface TradeOffAnalysis {
+    score_bonus: number;
+    issues: TradeOffIssue[];
+}
+
+export interface OptimalComponentComparison {
+    component: string;
+    result: 'match' | 'acceptable' | 'suboptimal' | 'incorrect';
+    user_choice: string;
+    optimal_choice: string;
+    explanation: string;
+}
+
+export interface OptimalComparisonResult {
+    match_percentage: number;
+    summary: string;
+    components: OptimalComponentComparison[];
+}
+
+export interface ConceptGradingResponse {
+    total_score: number;
+    summary_feedback: string;
+    concept_feedback: ConceptFeedbackItem[];
+    trade_off_analysis?: TradeOffAnalysis;
+    optimal_comparison?: OptimalComparisonResult;
+}
+

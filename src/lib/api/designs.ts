@@ -8,6 +8,7 @@ import type {
     DesignOut,
     DesignDetailOut,
     ValidationResponse,
+    ConceptGradingResponse,
 } from '@/lib/types/design';
 
 const BASE_PATH = '/designs';
@@ -85,3 +86,16 @@ export async function validateSavedDesign(
         method: 'POST',
     }, true);
 }
+
+/**
+ * Run concept-based grading on a design
+ * Returns detailed feedback on architecture choices
+ */
+export async function gradeDesign(
+    designId: number
+): Promise<ConceptGradingResponse> {
+    return apiFetch<ConceptGradingResponse>(`${BASE_PATH}/${designId}/grade`, {
+        method: 'POST',
+    }, true);
+}
+

@@ -12,6 +12,7 @@ import type {
     GradingResult,
     EstimationComparison,
     UserEstimates,
+    ConceptGradingResponse,
 } from '@/lib/types/design';
 
 interface SimulationStore {
@@ -26,6 +27,8 @@ interface SimulationStore {
     gradingResult: GradingResult | null;
     estimationComparison: EstimationComparison | null;
     userEstimates: UserEstimates | null;
+    conceptGrading: ConceptGradingResponse | null;
+    isLoadingConceptGrading: boolean;
     error: string | null;
 
     // UI State
@@ -35,6 +38,8 @@ interface SimulationStore {
     startSimulation: (jobId: string) => void;
     updateProgress: (progress: number, scenario?: string) => void;
     setResults: (results: ScenarioResult[], totalScore: number, grading?: GradingResult, estimation?: EstimationComparison) => void;
+    setConceptGrading: (grading: ConceptGradingResponse | null) => void;
+    setLoadingConceptGrading: (loading: boolean) => void;
     setError: (error: string) => void;
     openResultsPanel: () => void;
     closeResultsPanel: () => void;
@@ -55,6 +60,8 @@ export const useSimulationStore = create<SimulationStore>()(
         gradingResult: null,
         estimationComparison: null,
         userEstimates: null,
+        conceptGrading: null,
+        isLoadingConceptGrading: false,
         error: null,
         isResultsPanelOpen: false,
 
@@ -69,6 +76,7 @@ export const useSimulationStore = create<SimulationStore>()(
             state.totalScore = null;
             state.gradingResult = null;
             state.estimationComparison = null;
+            state.conceptGrading = null;
             state.error = null;
             state.isResultsPanelOpen = true;
         }),
@@ -86,6 +94,15 @@ export const useSimulationStore = create<SimulationStore>()(
             state.totalScore = totalScore;
             state.gradingResult = grading ?? null;
             state.estimationComparison = estimation ?? null;
+        }),
+
+        setConceptGrading: (grading) => set((state) => {
+            state.conceptGrading = grading;
+            state.isLoadingConceptGrading = false;
+        }),
+
+        setLoadingConceptGrading: (loading) => set((state) => {
+            state.isLoadingConceptGrading = loading;
         }),
 
         setError: (error) => set((state) => {
@@ -117,6 +134,8 @@ export const useSimulationStore = create<SimulationStore>()(
             state.gradingResult = null;
             state.estimationComparison = null;
             state.userEstimates = null;
+            state.conceptGrading = null;
+            state.isLoadingConceptGrading = false;
             state.error = null;
             state.isResultsPanelOpen = false;
         }),
