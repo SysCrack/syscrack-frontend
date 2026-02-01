@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Code2, Eye, EyeOff, Check } from "lucide-react";
 import { Button, Input } from "@/components/ui";
+import { OAuthButtons, AuthDivider } from "@/components/auth";
 import { supabase } from "@/lib/supabase/client";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -131,6 +132,11 @@ export function SignUpForm() {
             <p className="text-[var(--color-text-secondary)] text-center mb-8">
               Start mastering SQL performance today
             </p>
+
+            {/* OAuth Buttons */}
+            <OAuthButtons />
+
+            <AuthDivider text="or sign up with email" />
 
             <form onSubmit={handleSubmit} className="space-y-5">
               {error && (

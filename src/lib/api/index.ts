@@ -22,4 +22,18 @@ export {
   type UserProfile,
   type UpdateProfileRequest,
 } from "./users";
+export {
+  createDesign,
+  getDesign,
+  updateDesign,
+  deleteDesign,
+  listDesigns,
+  validateDesignDraft,
+  validateSavedDesign,
+} from "./designs";
+export {
+  runSimulation,
+  getSimulationStatus,
+  pollSimulationUntilComplete,
+} from "./simulations";
 

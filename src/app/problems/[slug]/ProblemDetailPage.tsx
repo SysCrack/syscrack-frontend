@@ -1,32 +1,118 @@
 "use client";
 
-import { use } from "react";
+import { use, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Lock, Code, Clock } from "lucide-react";
+import { Lock } from "lucide-react";
 import { TopNav } from "@/components/layout/TopNav";
-import { Button, Badge } from "@/components/ui";
+import { Button } from "@/components/ui";
+import { ProblemPanel } from "@/components/problem/ProblemPanel";
+import { EditorCanvas } from "@/components/editor";
+import { ResultsPanel } from "@/components/results";
 import { useProblem } from "@/lib/hooks/useProblems";
+import { useSubmitSolution } from "@/lib/hooks/useSubmissions";
 import { useAuthStore } from "@/stores/authStore";
 
 interface ProblemDetailPageProps {
   params: Promise<{ slug: string }>;
 }
 
-const difficultyVariants = {
-  easy: "easy" as const,
-  medium: "medium" as const,
-  hard: "hard" as const,
-};
+type SubmissionStatus = "accepted" | "suboptimal" | "wrong" | "timeout" | "error";
+
+interface SubmissionResult {
+  id: number;
+  status: SubmissionStatus;
+  score: number;
+  execution_time_ms: number;
+  feedback: {
+    messages?: string[];
+    issues?: Array<{
+      issue_type: string;
+      severity: string;
+      message: string;
+    }>;
+  };
+}
 
 export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
   const { slug } = use(params);
   const router = useRouter();
-  const { user, isLoading: authLoading, isPremium } = useAuthStore();
-  
-  const { data: problem, isLoading, error } = useProblem(slug);
+  const { user, isLoading: authLoading } = useAuthStore();
 
-  // Show loading state
-  if (isLoading || authLoading) {
+  // Fetch problem data
+  const { data: apiProblem, isLoading, error } = useProblem(slug, {
+    enabled: !authLoading && !!user,
+  });
+
+  // Transform API data to UI model
+  const problem = apiProblem ? {
+    ...apiProblem,
+    // Map API requirements to UI format
+    // Fallback to empty arrays if data is missing or not in expected format
+    definition: {
+      example: (apiProblem.requirements?.example as any) || { input: "", output: "" },
+      functional_requirements: (apiProblem.requirements?.functional as any[])?.map(
+        r => typeof r === 'string' ? r : r.text
+      ) || [],
+      non_functional_requirements: (apiProblem.requirements?.non_functional as any[])?.map(
+        r => typeof r === 'string' ? r : r.text
+      ) || [],
+      assumptions: (apiProblem.requirements?.assumptions as string[]) || [],
+      estimated_usage: (apiProblem.requirements?.estimated_usage as any[]) || [],
+    },
+  } : null;
+
+  // Submission state
+  const submitMutation = useSubmitSolution();
+  const [isResultsOpen, setIsResultsOpen] = useState(false);
+  const [lastResult, setLastResult] = useState<SubmissionResult | null>(null);
+
+  // Handle submit
+  const handleSubmit = useCallback(
+    async (code: string) => {
+      if (!problem) return;
+
+      try {
+        const result = await submitMutation.mutateAsync({
+          problemId: problem.id,
+          code,
+        });
+
+        // Transform the result to match our expected type
+        const submissionResult: SubmissionResult = {
+          id: result.id,
+          status: result.status as SubmissionStatus,
+          score: result.score,
+          execution_time_ms: result.execution_time_ms,
+          feedback: result.feedback || { messages: [], issues: [] },
+        };
+
+        setLastResult(submissionResult);
+        setIsResultsOpen(true);
+      } catch (err) {
+        // Error is handled by the mutation
+        console.error("Submission failed:", err);
+      }
+    },
+    [problem, submitMutation]
+  );
+
+  // Handle close results
+  const handleCloseResults = useCallback(() => {
+    setIsResultsOpen(false);
+  }, []);
+
+  // Handle try again
+  const handleTryAgain = useCallback(() => {
+    setIsResultsOpen(false);
+  }, []);
+
+  // Handle next problem (placeholder for now)
+  const handleNextProblem = useCallback(() => {
+    router.push("/problems");
+  }, [router]);
+
+  // Show loading while auth is initializing
+  if (authLoading) {
     return (
       <div className="min-h-screen flex flex-col bg-[var(--color-canvas-bg)]">
         <TopNav />
@@ -65,6 +151,18 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
     );
   }
 
+  // Show loading while fetching problem
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex flex-col bg-[var(--color-canvas-bg)]">
+        <TopNav />
+        <main className="flex-1 flex items-center justify-center">
+          <div className="h-8 w-8 border-4 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin" />
+        </main>
+      </div>
+    );
+  }
+
   // Handle error
   if (error) {
     return (
@@ -92,80 +190,49 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
   if (!problem) return null;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[var(--color-canvas-bg)]">
+    <div className="h-screen flex flex-col bg-[var(--color-canvas-bg)] overflow-hidden">
       <TopNav />
-      
-      <main className="flex-1 py-8">
-        <div className="mx-auto max-w-4xl px-4 sm:px-6">
-          {/* Back button */}
-          <button
-            onClick={() => router.push("/problems")}
-            className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors mb-6"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Problems
-          </button>
 
-          {/* Problem header */}
-          <div className="mb-8">
-            <div className="flex flex-wrap items-center gap-2 mb-3">
-              <Badge variant={difficultyVariants[problem.difficulty]}>
-                {problem.difficulty.charAt(0).toUpperCase() + problem.difficulty.slice(1)}
-              </Badge>
-              <Badge variant="default">{problem.topic}</Badge>
-              {problem.is_premium_only && (
-                <Badge variant="premium">
-                  <Lock className="h-3 w-3 mr-1" />
-                  Premium
-                </Badge>
-              )}
-            </div>
-            <h1 className="text-3xl font-bold text-[var(--color-text-primary)]">
-              {problem.title}
-            </h1>
-          </div>
-
-          {/* Problem content */}
-          <div className="bg-[var(--color-panel-bg)] border border-[var(--color-border)] rounded-xl p-6 mb-8">
-            <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
-              Description
-            </h2>
-            <div className="prose prose-sm max-w-none text-[var(--color-text-secondary)]">
-              <p>{problem.description}</p>
-            </div>
-          </div>
-
-          {/* Starter code */}
-          {problem.starter_code && (
-            <div className="bg-[var(--color-panel-bg)] border border-[var(--color-border)] rounded-xl p-6 mb-8">
-              <div className="flex items-center gap-2 mb-4">
-                <Code className="h-5 w-5 text-[var(--color-primary)]" />
-                <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
-                  Starter Code
-                </h2>
-              </div>
-              <pre className="bg-[var(--color-surface)] rounded-lg p-4 overflow-x-auto">
-                <code className="text-sm font-mono text-[var(--color-text-primary)]">
-                  {problem.starter_code}
-                </code>
-              </pre>
-            </div>
-          )}
-
-          {/* Editor placeholder */}
-          <div className="bg-[var(--color-surface)] border-2 border-dashed border-[var(--color-border)] rounded-xl p-12 text-center">
-            <Clock className="h-12 w-12 text-[var(--color-text-tertiary)] mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-[var(--color-text-primary)] mb-2">
-              Editor Coming Soon
-            </h3>
-            <p className="text-[var(--color-text-secondary)] max-w-md mx-auto">
-              The SQL editor with live execution and grading will be available in Phase 2.
-              For now, you can view problem descriptions and starter code.
-            </p>
-          </div>
+      {/* Main Workspace */}
+      <div className="flex-1 flex min-h-0">
+        {/* Problem Panel - Left Side */}
+        <div className="w-[40%] min-w-[450px] max-w-[600px] flex-shrink-0 hidden lg:block border-r border-[var(--color-border)]">
+          <ProblemPanel problem={problem} className="h-full border-none" />
         </div>
-      </main>
+
+        {/* Editor Canvas - Right Side */}
+        <div className="flex-1 min-w-0">
+          <EditorCanvas
+            problemId={problem.id}
+            starterCode={problem.starter_code || "-- Write your SQL query here\n"}
+            onSubmit={handleSubmit}
+            isSubmitting={submitMutation.isPending}
+          />
+        </div>
+      </div>
+
+      {/* Results Panel - Slide Up from Bottom */}
+      <ResultsPanel
+        result={lastResult}
+        isOpen={isResultsOpen}
+        onClose={handleCloseResults}
+        onTryAgain={handleTryAgain}
+        onNextProblem={lastResult?.status === "accepted" ? handleNextProblem : undefined}
+      />
+
+      {/* Mobile: Problem panel toggle (future enhancement) */}
+      <div className="lg:hidden fixed bottom-20 right-4 z-30">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            // Toggle mobile problem panel - future feature
+          }}
+          className="shadow-lg"
+        >
+          View Problem
+        </Button>
+      </div>
     </div>
   );
 }
-
