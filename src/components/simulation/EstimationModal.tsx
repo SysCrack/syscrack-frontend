@@ -60,7 +60,7 @@ export function EstimationModal({ isOpen, onClose, onConfirm }: EstimationModalP
                     <div className="flex items-start gap-3 p-4 rounded-xl bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20 text-[var(--color-text-primary)] text-sm shadow-inner">
                         <Info className="h-5 w-5 text-[var(--color-primary)] shrink-0 mt-0.5" />
                         <p className="leading-relaxed opacity-90">
-                            Predict how your system will perform under load. We'll compare your estimates with actual results to grade your intuition.
+                            Predict how your system will perform under load. We&apos;ll compare your estimates with actual results to grade your intuition.
                         </p>
                     </div>
 
