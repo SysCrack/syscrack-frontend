@@ -1,10 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { AuthProvider } from "@/components/providers/AuthProvider";
-import { QueryProvider } from "@/components/providers/QueryProvider";
-import { ThemeProvider } from "@/components/providers/ThemeProvider";
-import { Toaster } from "sonner";
+import { ClientProviders } from "@/components/providers/ClientProviders";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -17,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Syscrack - Master SQL Performance",
-  description: "Practice optimizing database queries with instant feedback and real execution times.",
+  title: "Syscrack - System Design Practice",
+  description: "Master system design and SQL with Syscrack.",
 };
 
 export default function RootLayout({
@@ -27,25 +24,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}
-      >
-        <ThemeProvider>
-          <AuthProvider>
-            <QueryProvider>
-              {children}
-              <Toaster
-                position="bottom-right"
-                richColors
-                closeButton
-                toastOptions={{
-                  duration: 4000,
-                }}
-              />
-            </QueryProvider>
-          </AuthProvider>
-        </ThemeProvider>
+    <html lang="en">
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen font-sans`}>
+        <ClientProviders>
+          {children}
+        </ClientProviders>
       </body>
     </html>
   );

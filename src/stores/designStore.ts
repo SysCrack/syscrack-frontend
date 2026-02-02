@@ -36,7 +36,7 @@ interface DesignStore {
 
 export const useDesignStore = create<DesignStore>()(
     persist(
-        immer((set, get) => ({
+        immer((set) => ({
             // Initial state
             currentDesignId: null,
             problemId: null,
@@ -52,19 +52,19 @@ export const useDesignStore = create<DesignStore>()(
 
             setProblemId: (id) => set({ problemId: id }),
 
-            setElements: (elements) => set((state) => {
-                state.elements = elements as any; // Cast for immer compatibility
+            setElements: (elements) => set((state: any) => {
+                state.elements = elements;
             }),
 
             selectElement: (id) => set({ selectedElementId: id }),
 
-            updateElementConfig: (id, config) => set((state) => {
-                const elementIndex = state.elements.findIndex((el) => el.id === id);
+            updateElementConfig: (id, config) => set((state: any) => {
+                const elementIndex = state.elements.findIndex((el: any) => el.id === id);
                 if (elementIndex !== -1) {
                     const element = state.elements[elementIndex];
                     if (element.customData) {
-                        (element.customData as any).componentConfig = {
-                            ...(element.customData as any).componentConfig,
+                        element.customData.componentConfig = {
+                            ...(element.customData.componentConfig || {}),
                             ...config,
                         };
                     }
