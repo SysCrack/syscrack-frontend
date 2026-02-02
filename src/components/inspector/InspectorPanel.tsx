@@ -169,7 +169,7 @@ function renderFormFields(
     onChange: (updates: Record<string, any>) => void
 ) {
     const handleFieldChange = (key: string, value: any) => {
-        let updates: Record<string, any> = { [key]: value };
+        const updates: Record<string, any> = { [key]: value };
 
         // Apply specific rules
         if (type === ComponentType.DATABASE) {
