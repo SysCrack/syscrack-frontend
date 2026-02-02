@@ -12,9 +12,10 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export function createClient() {
+  // Provide defaults to avoid @supabase/ssr throwing during build-time evaluation
   return createBrowserClient(
-    supabaseUrl || "",
-    supabaseAnonKey || ""
+    supabaseUrl || "https://placeholder.supabase.co",
+    supabaseAnonKey || "placeholder-key"
   );
 }
 
