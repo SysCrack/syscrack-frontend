@@ -170,7 +170,7 @@ export const useDebugTraceStore = create<DebugTraceState>((set, get) => ({
                 }
                 return {
                     ...particle,
-                    status: trace.status === 'completed' ? 'completed' : 'failed' as const,
+                    status: (trace.status === 'completed' ? 'completed' : 'failed') as RequestParticle['status'],
                 };
             }
 
@@ -195,7 +195,7 @@ export const useDebugTraceStore = create<DebugTraceState>((set, get) => ({
             if (newTime >= hopArrivalTime && newTime < hopDepartureTime) {
                 return {
                     ...particle,
-                    status: currentHop.cache_hit ? 'cache_hit' : 'processing' as const,
+                    status: (currentHop.cache_hit ? 'cache_hit' : 'processing') as RequestParticle['status'],
                     progress: 0.5, // Parked at component
                 };
             }
