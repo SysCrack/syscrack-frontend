@@ -206,15 +206,34 @@ export interface SimulationRequest {
 }
 
 export interface SimulationMetrics {
+    // Throughput
     throughput_qps: number;
+    requests_per_second: number;
+
+    // Latency metrics
     avg_latency_ms: number;
     p50_latency_ms: number;
     p95_latency_ms: number;
     p99_latency_ms: number;
+
+    // Response time metrics
+    response_time_ms: number;
+    ttfb_ms: number;
+
+    // Error metrics
     error_rate: number;
+    error_breakdown: Record<string, number>;
+
+    // Cost
     estimated_cost_monthly: number;
+
+    // Bottleneck identification
     bottlenecks: string[];
     single_points_of_failure: string[];
+
+    // Queue/connection metrics
+    max_queue_depth: number;
+    avg_connection_pool_usage: number;
 }
 
 export interface ScenarioResult {
@@ -253,6 +272,17 @@ export interface EstimationComparison {
     bonus_points: number;
 }
 
+// Component diagnostic for visual feedback
+export interface ComponentDiagnostic {
+    component_id: string;
+    component_name: string;
+    severity: 'info' | 'warning' | 'critical';
+    event_type: string;
+    message: string;
+    metric_value?: number;
+    suggestion?: string;
+}
+
 export interface SimulationResponse {
     job_id: string;
     status: SimulationStatus;
@@ -262,6 +292,7 @@ export interface SimulationResponse {
     total_score?: number;
     estimation_comparison?: EstimationComparison;
     grading_result?: GradingResult;
+    diagnostics?: ComponentDiagnostic[];
     error?: string;
 }
 

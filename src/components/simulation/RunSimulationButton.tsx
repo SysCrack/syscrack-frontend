@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Play, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Play, Loader2, CheckCircle2, AlertTriangle, Bug } from 'lucide-react';
 import { toast } from 'sonner';
 import { useDesignStore } from '@/stores/designStore';
 import { useSimulationStore } from '@/stores/simulationStore';
@@ -11,6 +11,7 @@ import * as designsApi from '@/lib/api/designs';
 import { SimulationStatus, type UserEstimates } from '@/lib/types/design';
 import { parseExcalidrawScene, type ParsedDesign } from '@/lib/utils/sceneParser';
 import { EstimationModal } from './EstimationModal';
+import { useDebugTraceStore } from '@/stores/debugTraceStore';
 
 type ButtonState = 'idle' | 'validating' | 'saving' | 'running' | 'disabled';
 
@@ -39,6 +40,7 @@ export function RunSimulationButton() {
     // Local state
     const [buttonState, setButtonState] = useState<ButtonState>('idle');
     const [isEstimationModalOpen, setIsEstimationModalOpen] = useState(false);
+    const [isDebugRunning, setIsDebugRunning] = useState(false);
 
 
     // Update button state based on external states
@@ -179,6 +181,46 @@ export function RunSimulationButton() {
         }
     };
 
+    /**
+     * Run debug trace for step-by-step visualization
+     */
+    const handleDebugTrace = async () => {
+        if (!currentDesignId || isRunning || isDebugRunning || isDirty) return;
+
+        // Get store actions
+        const { setTraceResult, startAnimation } = useDebugTraceStore.getState();
+
+        try {
+            setIsDebugRunning(true);
+            toast.info('Debug Trace', {
+                description: 'Tracing 100 requests through your system...',
+                icon: <Bug className="h-4 w-4" />,
+            });
+
+            const result = await designsApi.runDebugTrace(currentDesignId, 100);
+
+            // Set trace result in store (this initializes particles)
+            setTraceResult(result);
+
+            // Show summary
+            toast.success('Debug Trace Ready', {
+                description: `${result.total_requests} requests loaded. Press Play to start animation.`,
+                duration: 5000,
+            });
+
+            // Auto-start animation
+            startAnimation();
+
+        } catch (err) {
+            console.error('Failed to run debug trace:', err);
+            toast.error('Debug Trace Failed', {
+                description: err instanceof Error ? err.message : 'Unknown error',
+            });
+        } finally {
+            setIsDebugRunning(false);
+        }
+    };
+
     // Button text based on state
     const getButtonText = () => {
         switch (buttonState) {
@@ -205,30 +247,56 @@ export function RunSimulationButton() {
 
     const isDisabled = buttonState === 'disabled' || buttonState === 'validating' || buttonState === 'saving' || buttonState === 'running';
     const isLoading = buttonState === 'validating' || buttonState === 'saving' || buttonState === 'running';
+    const isDebugDisabled = isDisabled || isDebugRunning;
 
     return (
         <>
-            <button
-                id="run-simulation-btn"
-                onClick={handleRun}
-                disabled={isDisabled}
-                className={`
-                flex items-center gap-2 px-5 py-2.5 rounded-lg shadow-sm
-                text-sm font-medium transition-all
-                ${isDisabled
-                        ? 'bg-[var(--color-surface)] text-[var(--color-text-tertiary)] border border-[var(--color-border)] cursor-not-allowed'
-                        : 'bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white shadow-md hover:shadow-lg cursor-pointer'
-                    }
-            `}
-                title={getTooltip()}
-            >
-                {isLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                    <Play className="h-4 w-4 fill-current" />
-                )}
-                {getButtonText()}
-            </button>
+            <div className="flex items-center gap-2">
+                <button
+                    id="run-simulation-btn"
+                    onClick={handleRun}
+                    disabled={isDisabled}
+                    className={`
+                    flex items-center gap-2 px-5 py-2.5 rounded-lg shadow-sm
+                    text-sm font-medium transition-all
+                    ${isDisabled
+                            ? 'bg-[var(--color-surface)] text-[var(--color-text-tertiary)] border border-[var(--color-border)] cursor-not-allowed'
+                            : 'bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white shadow-md hover:shadow-lg cursor-pointer'
+                        }
+                `}
+                    title={getTooltip()}
+                >
+                    {isLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <Play className="h-4 w-4 fill-current" />
+                    )}
+                    {getButtonText()}
+                </button>
+
+                {/* Debug Trace Button */}
+                <button
+                    id="debug-trace-btn"
+                    onClick={handleDebugTrace}
+                    disabled={isDebugDisabled}
+                    className={`
+                    flex items-center gap-2 px-3 py-2.5 rounded-lg
+                    text-sm font-medium transition-all
+                    ${isDebugDisabled
+                            ? 'bg-[var(--color-surface)] text-[var(--color-text-tertiary)] border border-[var(--color-border)] cursor-not-allowed'
+                            : 'bg-[var(--color-surface)] hover:bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] cursor-pointer'
+                        }
+                `}
+                    title="Run discrete request trace for step-by-step visualization"
+                >
+                    {isDebugRunning ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <Bug className="h-4 w-4" />
+                    )}
+                    Debug
+                </button>
+            </div>
 
             <EstimationModal
                 isOpen={isEstimationModalOpen}

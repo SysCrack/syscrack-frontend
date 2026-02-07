@@ -99,3 +99,46 @@ export async function gradeDesign(
     }, true);
 }
 
+/**
+ * Run discrete request trace for step-by-step visualization
+ * Returns detailed trace of each request including hops and timing
+ */
+export async function runDebugTrace(
+    designId: number,
+    numRequests: number = 100
+): Promise<DebugTraceResponse> {
+    return apiFetch<DebugTraceResponse>(
+        `${BASE_PATH}/${designId}/debug-trace?num_requests=${numRequests}`,
+        { method: 'POST' },
+        true
+    );
+}
+
+// Type definition for debug trace response
+export interface DebugTraceResponse {
+    total_requests: number;
+    successful_requests: number;
+    failed_requests: number;
+    cached_requests: number;
+    avg_hops: number;
+    avg_latency_ms: number;
+    p99_latency_ms: number;
+    traces: Array<{
+        request_id: string;
+        start_time_ms: number;
+        end_time_ms: number;
+        total_latency_ms: number;
+        status: string;
+        hops: Array<{
+            component_id: string;
+            component_name: string;
+            component_type: string;
+            arrival_time_ms: number;
+            processing_time_ms: number;
+            departure_time_ms: number;
+            status: string;
+            cache_hit: boolean;
+            error_message: string | null;
+        }>;
+    }>;
+}

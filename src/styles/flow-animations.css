@@ -1,0 +1,240 @@
+/**
+ * CSS Animations for Data Flow and Debug Trace
+ * 
+ * These animations run on the GPU compositor thread, making them
+ * resilient to main-thread congestion. Use these as fallback when
+ * requestAnimationFrame-based animations are stuttering.
+ */
+
+/* ===== GPU COMPOSITING HINTS ===== */
+.gpu-accelerated {
+    will-change: transform, opacity;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+}
+
+/* ===== PARTICLE ANIMATIONS ===== */
+
+/* Continuous flow along a path - use with SVG animateMotion or offset-path */
+@keyframes particleFlow {
+    0% {
+        offset-distance: 0%;
+        opacity: 0.8;
+    }
+    10% {
+        opacity: 1;
+    }
+    90% {
+        opacity: 1;
+    }
+    100% {
+        offset-distance: 100%;
+        opacity: 0.8;
+    }
+}
+
+/* Pulse animation for active components */
+@keyframes activePulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+        transform: scale(1);
+    }
+    50% {
+        box-shadow: 0 0 20px 4px rgba(59, 130, 246, 0.6);
+        transform: scale(1.02);
+    }
+}
+
+/* Glow animation for particles */
+@keyframes particleGlow {
+    0%, 100% {
+        filter: drop-shadow(0 0 4px currentColor);
+        transform: scale(1);
+    }
+    50% {
+        filter: drop-shadow(0 0 12px currentColor);
+        transform: scale(1.1);
+    }
+}
+
+/* Cache hit burst effect */
+@keyframes cacheHitBurst {
+    0% {
+        transform: scale(0.5);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.5);
+        opacity: 0.8;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* Error pulse - more aggressive */
+@keyframes errorPulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    }
+    50% {
+        box-shadow: 0 0 20px 8px rgba(239, 68, 68, 0.4);
+    }
+}
+
+/* Continuous orbit for generic activity indication */
+@keyframes orbit {
+    0% {
+        transform: rotate(0deg) translateX(20px) rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg) translateX(20px) rotate(-360deg);
+    }
+}
+
+/* Dash animation for connection lines */
+@keyframes dashFlow {
+    0% {
+        stroke-dashoffset: 24;
+    }
+    100% {
+        stroke-dashoffset: 0;
+    }
+}
+
+/* ===== PARTICLE TRAVEL ANIMATION (CSS offset-path) ===== */
+/* Note: Requires defining path in style attribute */
+.particle-travel {
+    animation: particleFlow 3s linear infinite;
+    will-change: offset-distance;
+}
+
+.particle-travel.fast { animation-duration: 1.5s; }
+.particle-travel.slow { animation-duration: 5s; }
+
+/* ===== UTILITY CLASSES ===== */
+
+.animate-pulse-glow {
+    animation: particleGlow 1.5s ease-in-out infinite;
+}
+
+.animate-active-pulse {
+    animation: activePulse 2s ease-in-out infinite;
+}
+
+.animate-cache-hit {
+    animation: cacheHitBurst 0.5s ease-out;
+}
+
+.animate-error-pulse {
+    animation: errorPulse 0.8s ease-in-out infinite;
+}
+
+.animate-orbit {
+    animation: orbit 3s linear infinite;
+}
+
+.animate-dash-flow {
+    animation: dashFlow 1s linear infinite;
+}
+
+/* ===== CONNECTION LINE ANIMATIONS ===== */
+
+.connection-line {
+    stroke-dasharray: 8 4;
+    animation: dashFlow 1s linear infinite;
+    will-change: stroke-dashoffset;
+}
+
+.connection-line.active {
+    stroke-width: 4;
+    filter: drop-shadow(0 0 6px currentColor);
+}
+
+.connection-line.stressed {
+    stroke: #f59e0b;
+    animation: dashFlow 0.5s linear infinite;
+}
+
+.connection-line.failed {
+    stroke: #ef4444;
+    animation: dashFlow 0.3s linear infinite;
+}
+
+/* ===== COMPONENT HIGHLIGHT STATES ===== */
+
+.component-highlight {
+    position: absolute;
+    border-radius: 8px;
+    pointer-events: none;
+    will-change: box-shadow, transform;
+}
+
+.component-highlight.active {
+    border: 2px solid #3b82f6;
+    animation: activePulse 2s ease-in-out infinite;
+}
+
+.component-highlight.processing {
+    border: 2px solid #f59e0b;
+    animation: activePulse 1s ease-in-out infinite;
+}
+
+.component-highlight.cache-hit {
+    border: 2px solid #22c55e;
+    animation: cacheHitBurst 0.5s ease-out;
+}
+
+.component-highlight.error {
+    border: 2px solid #ef4444;
+    animation: errorPulse 0.8s ease-in-out infinite;
+}
+
+/* ===== CSS-ONLY PARTICLE (use multiple of these along path) ===== */
+
+.css-particle {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #3b82f6;
+    will-change: transform, opacity;
+    animation: particleGlow 1.5s ease-in-out infinite;
+}
+
+.css-particle::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    background: inherit;
+    opacity: 0.3;
+    filter: blur(4px);
+}
+
+.css-particle.success { background: #22c55e; }
+.css-particle.warning { background: #f59e0b; }
+.css-particle.error { background: #ef4444; }
+.css-particle.info { background: #3b82f6; }
+
+/* ===== REDUCED MOTION SUPPORT ===== */
+
+@media (prefers-reduced-motion: reduce) {
+    .particle-travel,
+    .animate-pulse-glow,
+    .animate-active-pulse,
+    .animate-cache-hit,
+    .animate-error-pulse,
+    .animate-orbit,
+    .animate-dash-flow,
+    .connection-line,
+    .css-particle {
+        animation: none !important;
+    }
+    
+    .component-highlight {
+        animation: none !important;
+        opacity: 0.8;
+    }
+}

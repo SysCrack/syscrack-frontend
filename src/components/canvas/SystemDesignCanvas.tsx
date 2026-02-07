@@ -9,6 +9,8 @@ import { useDesignStore } from '@/stores/designStore';
 import * as designsApi from '@/lib/api/designs';
 import { parseExcalidrawScene, isSystemConnection, SystemConnectionData } from '@/lib/utils/sceneParser';
 import { DataFlowOverlay } from '@/components/canvas/DataFlowOverlay';
+import { DebugTraceOverlay } from '@/components/canvas/DebugTraceOverlay';
+import { DebugTraceControls } from '@/components/canvas/DebugTraceControls';
 import { useSimulationStore } from '@/stores/simulationStore';
 import { useFlowAnimation } from '@/lib/hooks/useFlowAnimation';
 import { SimulationStatus } from '@/lib/types/design';
@@ -355,6 +357,16 @@ const SystemDesignCanvas = forwardRef<SystemDesignCanvasHandle, SystemDesignCanv
                     width={dimensions.width}
                     height={dimensions.height}
                 />
+
+                {/* Debug Trace Overlay for step-by-step request visualization */}
+                <DebugTraceOverlay
+                    viewportTransform={viewport}
+                    width={dimensions.width}
+                    height={dimensions.height}
+                />
+
+                {/* Debug Trace Controls */}
+                <DebugTraceControls />
             </div>
         );
     }
