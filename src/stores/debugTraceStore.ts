@@ -7,26 +7,7 @@
 import { create } from 'zustand';
 import type { DebugTraceResponse } from '@/lib/api/designs';
 
-interface TraceHop {
-    component_id: string;
-    component_name: string;
-    component_type: string;
-    arrival_time_ms: number;
-    processing_time_ms: number;
-    departure_time_ms: number;
-    status: string;
-    cache_hit: boolean;
-    error_message: string | null;
-}
-
-interface TracedRequest {
-    request_id: string;
-    start_time_ms: number;
-    end_time_ms: number;
-    total_latency_ms: number;
-    status: string;
-    hops: TraceHop[];
-}
+type ParticleStatus = 'in_flight' | 'processing' | 'completed' | 'failed' | 'cache_hit';
 
 // A request particle for animation
 interface RequestParticle {
@@ -34,9 +15,10 @@ interface RequestParticle {
     requestId: string;
     currentHopIndex: number;
     progress: number; // 0-1 within current hop transition
-    status: 'in_flight' | 'processing' | 'completed' | 'failed' | 'cache_hit';
+    status: ParticleStatus;
     sourceComponentId: string;
     targetComponentId: string;
+    startDelay: number; // Stagger start times
 }
 
 interface DebugTraceState {
@@ -45,7 +27,7 @@ interface DebugTraceState {
 
     // Animation state
     isAnimating: boolean;
-    currentTime: number; // Simulation time in ms
+    currentTime: number; // Animation time in ms
     playbackSpeed: number; // 1x, 2x, 4x, 8x
 
     // Active particles being animated
@@ -90,17 +72,22 @@ export const useDebugTraceStore = create<DebugTraceState>((set, get) => ({
         const particles: RequestParticle[] = [];
 
         if (result && result.traces.length > 0) {
-            // Create a particle for each request
+            // Create a particle for each request with staggered start times
             result.traces.forEach((trace, idx) => {
-                if (trace.hops.length >= 2) {
+                if (trace.hops.length >= 1) {
+                    const firstHop = trace.hops[0];
+                    const secondHop = trace.hops[1] || trace.hops[0];
+
                     particles.push({
                         id: `particle-${idx}`,
                         requestId: trace.request_id,
                         currentHopIndex: 0,
                         progress: 0,
                         status: 'in_flight',
-                        sourceComponentId: trace.hops[0].component_id,
-                        targetComponentId: trace.hops[1]?.component_id || trace.hops[0].component_id,
+                        sourceComponentId: firstHop.component_id,
+                        targetComponentId: secondHop.component_id,
+                        // Stagger starts: each request starts 100ms apart (scaled by playback)
+                        startDelay: idx * 100,
                     });
                 }
             });
@@ -146,39 +133,57 @@ export const useDebugTraceStore = create<DebugTraceState>((set, get) => ({
         const newErrorIds = new Set<string>();
         let processed = state.requestsProcessed;
 
+        // Animation timing constants
+        const HOP_TRAVEL_TIME = 800; // ms to travel between components
+        const HOP_PROCESS_TIME = 400; // ms to show "processing" at component
+
         const updatedParticles = state.particles.map(particle => {
-            const trace = state.traceResult?.traces.find(t => t.request_id === particle.requestId);
-            if (!trace) return particle;
-
-            // Scale trace times for visible animation (1ms trace = 50ms animation)
-            const timeScale = 50;
-            const scaledTraceStart = trace.start_time_ms * timeScale;
-
-            // Check if request should be active
-            if (newTime < scaledTraceStart) {
-                // Not started yet
+            // Check if this particle should start yet (stagger)
+            if (newTime < particle.startDelay) {
                 return particle;
             }
 
-            const currentHop = trace.hops[particle.currentHopIndex];
-            const nextHop = trace.hops[particle.currentHopIndex + 1];
+            // Already finished
+            if (particle.status === 'completed' || particle.status === 'failed') {
+                return particle;
+            }
 
-            if (!currentHop) {
-                // Request completed
-                if (particle.status !== 'completed' && particle.status !== 'failed') {
-                    processed++;
-                }
+            const trace = state.traceResult?.traces.find(t => t.request_id === particle.requestId);
+            if (!trace) return particle;
+
+            const particleTime = newTime - particle.startDelay;
+            const totalHops = trace.hops.length;
+
+            // Calculate which hop we're on based on elapsed time
+            const timePerHop = HOP_TRAVEL_TIME + HOP_PROCESS_TIME;
+            const totalDuration = totalHops * timePerHop;
+
+            // Check if completed
+            if (particleTime >= totalDuration) {
+                // Particle reached end - increment processed count
+                processed++;
                 return {
                     ...particle,
-                    status: (trace.status === 'completed' ? 'completed' : 'failed') as RequestParticle['status'],
+                    status: (trace.status === 'completed' ? 'completed' : 'failed') as ParticleStatus,
+                    progress: 1,
                 };
             }
 
-            // Calculate position in current hop transition
-            const hopArrivalTime = scaledTraceStart + (currentHop.arrival_time_ms * timeScale);
-            const hopDepartureTime = scaledTraceStart + (currentHop.departure_time_ms * timeScale);
+            // Calculate current hop index and phase
+            const currentHopIndex = Math.min(
+                Math.floor(particleTime / timePerHop),
+                totalHops - 1
+            );
+            const timeInHop = particleTime % timePerHop;
 
-            // Mark current component as active
+            const currentHop = trace.hops[currentHopIndex];
+            const nextHop = trace.hops[currentHopIndex + 1];
+
+            if (!currentHop) {
+                return particle;
+            }
+
+            // Mark component active
             newActiveIds.add(currentHop.component_id);
 
             // Check for cache hit
@@ -191,44 +196,31 @@ export const useDebugTraceStore = create<DebugTraceState>((set, get) => ({
                 newErrorIds.add(currentHop.component_id);
             }
 
-            // Processing phase
-            if (newTime >= hopArrivalTime && newTime < hopDepartureTime) {
+            // Determine phase: traveling or processing
+            if (timeInHop < HOP_TRAVEL_TIME) {
+                // Traveling to this hop
+                const travelProgress = timeInHop / HOP_TRAVEL_TIME;
                 return {
                     ...particle,
-                    status: (currentHop.cache_hit ? 'cache_hit' : 'processing') as RequestParticle['status'],
-                    progress: 0.5, // Parked at component
+                    currentHopIndex,
+                    progress: travelProgress,
+                    status: 'in_flight' as ParticleStatus,
+                    sourceComponentId: currentHopIndex > 0
+                        ? trace.hops[currentHopIndex - 1].component_id
+                        : currentHop.component_id,
+                    targetComponentId: currentHop.component_id,
                 };
-            }
-
-            // Transition to next hop
-            if (newTime >= hopDepartureTime && nextHop) {
-                const nextArrivalTime = scaledTraceStart + (nextHop.arrival_time_ms * timeScale);
-                const transitionDuration = nextArrivalTime - hopDepartureTime;
-                const transitionProgress = Math.min(1, (newTime - hopDepartureTime) / transitionDuration);
-
-                if (transitionProgress >= 1) {
-                    // Move to next hop
-                    const nextNextHop = trace.hops[particle.currentHopIndex + 2];
-                    return {
-                        ...particle,
-                        currentHopIndex: particle.currentHopIndex + 1,
-                        progress: 0,
-                        status: 'in_flight' as const,
-                        sourceComponentId: nextHop.component_id,
-                        targetComponentId: nextNextHop?.component_id || nextHop.component_id,
-                    };
-                }
-
+            } else {
+                // Processing at this hop
                 return {
                     ...particle,
-                    progress: transitionProgress,
-                    status: 'in_flight' as const,
+                    currentHopIndex,
+                    progress: 0.5, // Parked
+                    status: currentHop.cache_hit ? 'cache_hit' as ParticleStatus : 'processing' as ParticleStatus,
                     sourceComponentId: currentHop.component_id,
-                    targetComponentId: nextHop.component_id,
+                    targetComponentId: nextHop?.component_id || currentHop.component_id,
                 };
             }
-
-            return particle;
         });
 
         // Check if all requests are done
