@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useFlowAnimation, PROTOCOL_COLORS, BOTTLENECK_COLOR } from '@/lib/hooks/useFlowAnimation';
+import '@/styles/flow-animations.css';
 
 interface ConnectionPath {
     id: string;
@@ -186,12 +187,12 @@ export function DataFlowOverlay({
     }
 
     return (
-        <div className="absolute inset-0 pointer-events-none z-30">
+        <div className="absolute inset-0 pointer-events-none z-30 gpu-accelerated">
             <svg
-                className="absolute inset-0 pointer-events-auto"
+                className="absolute inset-0 pointer-events-auto gpu-accelerated"
                 width={width}
                 height={height}
-                style={{ overflow: 'visible' }}
+                style={{ overflow: 'visible', willChange: 'contents' }}
             >
                 <defs>
                     {/* Glow filter for particles */}
@@ -267,7 +268,7 @@ export function DataFlowOverlay({
                     const glow = conn ? getProtocolGlow(conn.protocol, conn.id) : 'rgba(107, 114, 128, 0.5)';
 
                     return (
-                        <g key={particle.id} className="filter-drop-shadow">
+                        <g key={particle.id} className="gpu-accelerated animate-pulse-glow" style={{ willChange: 'transform, opacity' }}>
                             {/* Outer Glow */}
                             <circle
                                 cx={pos.x}

@@ -10,7 +10,7 @@ import { useSimulationStore } from '@/stores/simulationStore';
 import { useFlowAnimation } from '@/lib/hooks/useFlowAnimation';
 import { useDesignStore } from '@/stores/designStore';
 import { SimulationStatus } from '@/lib/types/design';
-import type { ScenarioResult, EstimationComparison, MetricComparison } from '@/lib/types/design';
+import type { ScenarioResult, EstimationComparison, MetricComparison, ComponentDiagnostic } from '@/lib/types/design';
 import { isSystemComponent, isSystemConnection } from '@/lib/types/components';
 import { useEffect } from 'react';
 import { GradingPanel } from '@/components/results/GradingPanel';
@@ -172,50 +172,111 @@ function ComparisonRow({ label, comparison, unit }: { label: string, comparison:
 }
 
 /**
- * Metrics display component
+ * Metrics display component with enhanced fields
  */
 function MetricsTable({ metrics }: { metrics: ScenarioResult['metrics'] }) {
     return (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
-            <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
-                <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
-                    <TrendingUp className="h-3.5 w-3.5" />
-                    <span>Throughput</span>
+        <div className="space-y-3 mt-3">
+            {/* Primary metrics row */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
+                    <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
+                        <TrendingUp className="h-3.5 w-3.5" />
+                        <span>Throughput</span>
+                    </div>
+                    <div className="font-bold text-[var(--color-text-primary)]">
+                        {metrics.throughput_qps.toLocaleString()} QPS
+                    </div>
                 </div>
-                <div className="font-bold text-[var(--color-text-primary)]">
-                    {metrics.throughput_qps.toLocaleString()} QPS
+
+                <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
+                    <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
+                        <Clock className="h-3.5 w-3.5" />
+                        <span>P99 Latency</span>
+                    </div>
+                    <div className="font-bold text-[var(--color-text-primary)]">
+                        {Math.round(metrics.p99_latency_ms)}ms
+                    </div>
+                </div>
+
+                <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
+                    <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
+                        <Activity className="h-3.5 w-3.5" />
+                        <span>Error Rate</span>
+                    </div>
+                    <div className="font-bold text-[var(--color-text-primary)]">
+                        {(metrics.error_rate * 100).toFixed(2)}%
+                    </div>
+                </div>
+
+                <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
+                    <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
+                        <DollarSign className="h-3.5 w-3.5" />
+                        <span>Est. Cost</span>
+                    </div>
+                    <div className="font-bold text-[var(--color-text-primary)]">
+                        ${metrics.estimated_cost_monthly.toLocaleString()}/mo
+                    </div>
                 </div>
             </div>
 
-            <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
-                <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
-                    <Clock className="h-3.5 w-3.5" />
-                    <span>P99 Latency</span>
+            {/* Secondary metrics row - new fields */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
+                    <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
+                        <Zap className="h-3.5 w-3.5" />
+                        <span>Response Time</span>
+                    </div>
+                    <div className="font-bold text-[var(--color-text-primary)]">
+                        {Math.round(metrics.response_time_ms || 0)}ms
+                    </div>
                 </div>
-                <div className="font-bold text-[var(--color-text-primary)]">
-                    {Math.round(metrics.p99_latency_ms)}ms
+
+                <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
+                    <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
+                        <ArrowRight className="h-3.5 w-3.5" />
+                        <span>TTFB</span>
+                    </div>
+                    <div className="font-bold text-[var(--color-text-primary)]">
+                        {Math.round(metrics.ttfb_ms || 0)}ms
+                    </div>
+                </div>
+
+                <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
+                    <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
+                        <Activity className="h-3.5 w-3.5" />
+                        <span>P50 / P95</span>
+                    </div>
+                    <div className="font-bold text-[var(--color-text-primary)] text-sm">
+                        {Math.round(metrics.p50_latency_ms)}ms / {Math.round(metrics.p95_latency_ms)}ms
+                    </div>
+                </div>
+
+                <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
+                    <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
+                        <TrendingUp className="h-3.5 w-3.5" />
+                        <span>Pool Usage</span>
+                    </div>
+                    <div className="font-bold text-[var(--color-text-primary)]">
+                        {Math.round((metrics.avg_connection_pool_usage || 0) * 100)}%
+                    </div>
                 </div>
             </div>
 
-            <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
-                <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
-                    <Activity className="h-3.5 w-3.5" />
-                    <span>Error Rate</span>
+            {/* Error breakdown if present */}
+            {metrics.error_breakdown && Object.keys(metrics.error_breakdown).length > 0 && (
+                <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
+                    <div className="text-[var(--color-text-tertiary)] text-xs mb-2">Error Breakdown</div>
+                    <div className="flex gap-4">
+                        {Object.entries(metrics.error_breakdown).map(([type, count]) => (
+                            <div key={type} className="flex items-center gap-2">
+                                <span className="text-red-400 font-medium">{type}:</span>
+                                <span className="text-[var(--color-text-primary)]">{count}</span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
-                <div className="font-bold text-[var(--color-text-primary)]">
-                    {(metrics.error_rate * 100).toFixed(2)}%
-                </div>
-            </div>
-
-            <div className="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)]">
-                <div className="flex items-center gap-2 text-[var(--color-text-tertiary)] text-xs mb-1">
-                    <DollarSign className="h-3.5 w-3.5" />
-                    <span>Est. Cost</span>
-                </div>
-                <div className="font-bold text-[var(--color-text-primary)]">
-                    ${metrics.estimated_cost_monthly.toLocaleString()}/mo
-                </div>
-            </div>
+            )}
         </div>
     );
 }
@@ -252,6 +313,75 @@ function FeedbackList({ feedback }: { feedback: string[] }) {
                 </li>
             ))}
         </ul>
+    );
+}
+
+/**
+ * Diagnostics panel to display component warnings and issues
+ */
+function DiagnosticsPanel({ diagnostics }: { diagnostics?: ComponentDiagnostic[] }) {
+    if (!diagnostics || diagnostics.length === 0) return null;
+
+    const severityConfig = {
+        critical: {
+            icon: <XCircle className="h-4 w-4" />,
+            bg: 'bg-red-500/10',
+            text: 'text-red-500',
+            border: 'border-red-500/30'
+        },
+        warning: {
+            icon: <AlertTriangle className="h-4 w-4" />,
+            bg: 'bg-yellow-500/10',
+            text: 'text-yellow-500',
+            border: 'border-yellow-500/30'
+        },
+        info: {
+            icon: <Lightbulb className="h-4 w-4" />,
+            bg: 'bg-blue-500/10',
+            text: 'text-blue-500',
+            border: 'border-blue-500/30'
+        }
+    };
+
+    return (
+        <div className="space-y-2 mt-4">
+            <p className="text-xs text-[var(--color-text-tertiary)] uppercase tracking-wider mb-2">
+                Diagnostics ({diagnostics.length})
+            </p>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+                {diagnostics.map((diag, idx) => {
+                    const config = severityConfig[diag.severity] || severityConfig.info;
+                    return (
+                        <div
+                            key={idx}
+                            className={`p-3 rounded-lg border ${config.bg} ${config.border}`}
+                        >
+                            <div className="flex items-start gap-2">
+                                <div className={config.text}>{config.icon}</div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className={`font-medium ${config.text}`}>
+                                            {diag.component_name}
+                                        </span>
+                                        <span className="text-xs text-[var(--color-text-tertiary)]">
+                                            {diag.event_type}
+                                        </span>
+                                    </div>
+                                    <p className="text-sm text-[var(--color-text-secondary)]">
+                                        {diag.message}
+                                    </p>
+                                    {diag.suggestion && (
+                                        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                                            💡 {diag.suggestion}
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
     );
 }
 
@@ -314,6 +444,7 @@ export function ResultsPanel() {
     const currentScenario = useSimulationStore((state) => state.currentScenario);
     const error = useSimulationStore((state) => state.error);
     const conceptGrading = useSimulationStore((state) => state.conceptGrading);
+    const diagnostics = useSimulationStore((state) => state.diagnostics);
     const isLoadingConceptGrading = useSimulationStore((state) => state.isLoadingConceptGrading);
     const setConceptGrading = useSimulationStore((state) => state.setConceptGrading);
     const setLoadingConceptGrading = useSimulationStore((state) => state.setLoadingConceptGrading);
@@ -693,6 +824,9 @@ export function ResultsPanel() {
 
                             {/* Bottlenecks & SPOFs */}
                             <BottleneckDisplay bottlenecks={uniqueBottlenecks} spof={uniqueSpof} />
+
+                            {/* Component Diagnostics */}
+                            <DiagnosticsPanel diagnostics={diagnostics ?? undefined} />
                         </div>
 
                         {/* Right Column: Grading & Actions */}
