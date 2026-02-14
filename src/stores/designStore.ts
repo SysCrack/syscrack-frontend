@@ -8,7 +8,24 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import type { ExcalidrawElement } from '@excalidraw/excalidraw/types/element/types';
+
+/**
+ * Element shape used by the design store. Must be compatible with parseExcalidrawScene and canvas.
+ * Excalidraw does not export types from a stable path.
+ */
+export interface ExcalidrawElement {
+    id: string;
+    type: string;
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+    customData?: Record<string, unknown>;
+    boundElements?: readonly { type: string; id: string }[] | null;
+    startBinding?: { elementId: string } | null;
+    endBinding?: { elementId: string } | null;
+    [key: string]: unknown;
+}
 
 interface DesignStore {
     // State
