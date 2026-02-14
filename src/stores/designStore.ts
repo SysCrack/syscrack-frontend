@@ -8,7 +8,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import type { ExcalidrawElement } from '@excalidraw/excalidraw/types/element/types';
+
+/** Element shape used by the design store. Excalidraw does not export types from a stable path. */
+export type ExcalidrawElement = { id: string; customData?: Record<string, unknown>; [key: string]: unknown };
 
 interface DesignStore {
     // State
