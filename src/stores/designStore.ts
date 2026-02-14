@@ -9,8 +9,23 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 
-/** Element shape used by the design store. Excalidraw does not export types from a stable path. */
-export type ExcalidrawElement = { id: string; customData?: Record<string, unknown>; [key: string]: unknown };
+/**
+ * Element shape used by the design store. Must be compatible with parseExcalidrawScene and canvas.
+ * Excalidraw does not export types from a stable path.
+ */
+export interface ExcalidrawElement {
+    id: string;
+    type: string;
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+    customData?: Record<string, unknown>;
+    boundElements?: readonly { type: string; id: string }[] | null;
+    startBinding?: { elementId: string } | null;
+    endBinding?: { elementId: string } | null;
+    [key: string]: unknown;
+}
 
 interface DesignStore {
     // State
