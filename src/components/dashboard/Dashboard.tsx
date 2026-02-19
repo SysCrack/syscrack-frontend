@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Database, Layers, ArrowRight, Code2 } from "lucide-react";
+import { Database, Layers, ArrowRight, Code2, FlaskConical } from "lucide-react";
 import { TopNav } from "@/components/layout/TopNav";
 import { Footer } from "@/components/layout/Footer";
 import { useAuthStore } from "@/stores/authStore";
@@ -25,7 +25,7 @@ export function Dashboard() {
                         </p>
                     </div>
 
-                    <div className="grid md:grid-cols-2 gap-6 sm:gap-8">
+                    <div className="grid md:grid-cols-3 gap-6 sm:gap-8">
                         {/* SQL Problems Card */}
                         <Link
                             href="/problems"
@@ -40,15 +40,13 @@ export function Dashboard() {
                                     SQL Optimization
                                 </h2>
                                 <p className="mb-8 text-[var(--color-text-secondary)] leading-relaxed flex-grow">
-                                    Master database performance tuning with real-world query optimization challenges. Analyze query plans and fix bottlenecks.
+                                    Master database performance tuning with real-world query optimization challenges.
                                 </p>
 
                                 <div className="flex items-center text-blue-500 font-semibold group-hover:gap-2 gap-1 transition-all">
                                     Browse Problems <ArrowRight className="h-5 w-5" />
                                 </div>
                             </div>
-
-                            {/* Background Decoration */}
                             <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-blue-500/5 blur-3xl group-hover:bg-blue-500/10 transition-colors" />
                         </Link>
 
@@ -66,16 +64,38 @@ export function Dashboard() {
                                     System Design
                                 </h2>
                                 <p className="mb-8 text-[var(--color-text-secondary)] leading-relaxed flex-grow">
-                                    Architect scalable distributed systems. Design components, define data flows, and simulate traffic to find bottlenecks.
+                                    Design components, define data flows, and simulate traffic to find bottlenecks.
                                 </p>
 
                                 <div className="flex items-center text-purple-500 font-semibold group-hover:gap-2 gap-1 transition-all">
                                     Start Designing <ArrowRight className="h-5 w-5" />
                                 </div>
                             </div>
-
-                            {/* Background Decoration */}
                             <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-purple-500/5 blur-3xl group-hover:bg-purple-500/10 transition-colors" />
+                        </Link>
+
+                        {/* Sandbox Card */}
+                        <Link
+                            href="/sandbox"
+                            className="group relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 transition-all hover:border-emerald-500 hover:shadow-2xl hover:shadow-emerald-500/10"
+                        >
+                            <div className="relative z-10 flex flex-col h-full">
+                                <div className="mb-6 inline-flex h-16 w-16 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-500 group-hover:scale-110 transition-transform duration-300">
+                                    <FlaskConical className="h-8 w-8" />
+                                </div>
+
+                                <h2 className="mb-3 text-2xl font-bold text-[var(--color-text-primary)]">
+                                    Sandbox
+                                </h2>
+                                <p className="mb-8 text-[var(--color-text-secondary)] leading-relaxed flex-grow">
+                                    Free-form canvas to design and experiment with system architectures.
+                                </p>
+
+                                <div className="flex items-center text-emerald-500 font-semibold group-hover:gap-2 gap-1 transition-all">
+                                    Open Sandbox <ArrowRight className="h-5 w-5" />
+                                </div>
+                            </div>
+                            <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-emerald-500/5 blur-3xl group-hover:bg-emerald-500/10 transition-colors" />
                         </Link>
                     </div>
 

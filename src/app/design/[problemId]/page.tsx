@@ -87,6 +87,14 @@ export default function DesignPage() {
     const [selectedElement, setSelectedElement] = useState<any>(null);
     const canvasRef = useRef<SystemDesignCanvasHandle>(null);
     const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+    const [paletteCollapsed, setPaletteCollapsed] = useState(
+        () => typeof window !== 'undefined' && window.innerWidth < 1024
+    );
+
+    // Auto-collapse component palette when inspector opens so it doesn't block the config panel
+    useEffect(() => {
+        if (selectedElement) setPaletteCollapsed(true);
+    }, [selectedElement]);
 
     // Simulation Real-time Stream
     const currentJobId = useSimulationStore((state) => state.currentJobId);
@@ -420,7 +428,8 @@ export default function DesignPage() {
                         <div className="pointer-events-auto">
                             <ComponentPalette
                                 floating={true}
-                                collapsed={typeof window !== 'undefined' && window.innerWidth < 1024}
+                                collapsed={paletteCollapsed}
+                                onToggle={setPaletteCollapsed}
                             />
                         </div>
 
