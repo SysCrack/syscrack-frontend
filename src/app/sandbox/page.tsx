@@ -1,16 +1,22 @@
 /**
  * /sandbox — Free-form system design canvas.
- * 
- * Uses the new react-konva canvas with component palette and config sidebar.
- * Config sidebar only appears when a component is selected.
- * 
+ *
+ * Three-panel layout:
+ *   Left:   ComponentPalette (drag to canvas)
+ *   Center: SystemCanvas (react-konva) + SimulationBar (top-right)
+ *   Right:  ConfigSidebar (when component selected) OR SimulationResults (after simulation)
+ *
  * Only Konva-dependent components use dynamic import (ssr: false).
- * ConfigSidebar is pure HTML — imported normally so Zustand subscriptions work.
+ * Pure-HTML components import normally so Zustand subscriptions work.
  */
 'use client';
 
 import dynamic from 'next/dynamic';
 import ConfigSidebar from '@/components/system-canvas/ConfigSidebar';
+import SimulationControls from '@/components/system-canvas/SimulationControls';
+import SimulationResults from '@/components/system-canvas/SimulationResults';
+import { useCanvasStore } from '@/stores/canvasStore';
+import { useCanvasSimulationStore } from '@/stores/canvasSimulationStore';
 
 // Only Konva components need dynamic import (they access `window`)
 const SystemCanvas = dynamic(
@@ -21,6 +27,21 @@ const ComponentPalette = dynamic(
     () => import('@/components/system-canvas/ComponentPalette'),
     { ssr: false },
 );
+
+/**
+ * Right panel logic:
+ * - If simulation completed → show SimulationResults
+ * - Else if a component is selected → show ConfigSidebar
+ * - Else → nothing
+ */
+function RightPanel() {
+    const simStatus = useCanvasSimulationStore((s) => s.status);
+    const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
+
+    if (simStatus === 'running' || simStatus === 'paused' || simStatus === 'completed') return <SimulationResults />;
+    if (selectedNodeIds.length === 1) return <ConfigSidebar />;
+    return null;
+}
 
 export default function SandboxPage() {
     return (
@@ -37,11 +58,11 @@ export default function SandboxPage() {
                 <ComponentPalette />
             </div>
 
-            {/* Center — Canvas — minWidth:0 lets it shrink when sidebar appears */}
+            {/* Center — Canvas */}
             <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
                 <SystemCanvas />
 
-                {/* Top-left title */}
+                {/* Top-left: title */}
                 <div
                     style={{
                         position: 'absolute',
@@ -65,10 +86,22 @@ export default function SandboxPage() {
                         Drag components • Click ports to connect • Configure
                     </span>
                 </div>
+
+                {/* Top-right: simulation controls + metrics */}
+                <div
+                    style={{
+                        position: 'absolute',
+                        top: 12,
+                        right: 12,
+                        pointerEvents: 'auto',
+                    }}
+                >
+                    <SimulationControls />
+                </div>
             </div>
 
-            {/* Right — Config Sidebar (self-hides when nothing selected) */}
-            <ConfigSidebar />
+            {/* Right — Config or Results panel */}
+            <RightPanel />
         </div>
     );
 }

@@ -11,6 +11,7 @@ import { Stage, Layer, Line } from 'react-konva';
 import { useRef, useCallback, useEffect, useState } from 'react';
 import type Konva from 'konva';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { useCanvasSimulationStore, useCurrentResult } from '@/stores/canvasSimulationStore';
 import ComponentNode from './ComponentNode';
 import Connection from './Connection';
 import type { CanvasComponentType } from '@/lib/types/canvas';
@@ -36,6 +37,32 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     const viewport = useCanvasStore((s) => s.viewport);
     const connectingFrom = useCanvasStore((s) => s.connectingFrom);
     const connectingToPoint = useCanvasStore((s) => s.connectingToPoint);
+
+    // Simulation overlay data
+    const simStatus = useCanvasSimulationStore((s) => s.status);
+    const simOutput = useCanvasSimulationStore((s) => s.output);
+    const currentResult = useCurrentResult();
+    const particles = useCanvasSimulationStore((s) => s.particles);
+    const liveMetrics = useCanvasSimulationStore((s) => s.liveMetrics);
+
+    // Sim is active when running, paused, or completed
+    const simActive = (simStatus === 'running' || simStatus === 'paused' || simStatus === 'completed') && !!(currentResult || liveMetrics);
+
+    // Use live nodeMetrics when running, static when completed
+    const nodeMetrics = (simStatus === 'running' || simStatus === 'paused')
+        ? (liveMetrics?.nodeMetrics ?? {})
+        : (currentResult?.nodeMetrics ?? {});
+    const spofSet = new Set(
+        (simOutput?.spofDiagnostics ?? []).map((d) => d.componentId),
+    );
+
+    // Group particles by connection ID for efficient lookup
+    const particlesByConnection = new Map<string, typeof particles>();
+    for (const p of particles) {
+        const arr = particlesByConnection.get(p.connectionId);
+        if (arr) arr.push(p);
+        else particlesByConnection.set(p.connectionId, [p]);
+    }
 
     // ── Resize observer ──
     useEffect(() => {
@@ -281,6 +308,13 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                                 targetNode={target}
                                 isSelected={selectedConnectionId === conn.id}
                                 onSelect={handleConnectionSelect}
+                                simActive={simActive}
+                                simHealthy={
+                                    simActive
+                                        ? (nodeMetrics[conn.targetId]?.avgErrorRate ?? 0) < 0.01
+                                        : undefined
+                                }
+                                particles={particlesByConnection.get(conn.id)}
                             />
                         );
                     })}
@@ -312,6 +346,8 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                             onDragEnd={handleNodeDragEnd}
                             onPortClick={handlePortClick}
                             isConnecting={!!connectingFrom}
+                            simState={simActive ? nodeMetrics[node.id] : undefined}
+                            isSpof={simActive ? spofSet.has(node.id) : false}
                         />
                     ))}
                 </Layer>

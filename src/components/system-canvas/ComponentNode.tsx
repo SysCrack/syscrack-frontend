@@ -1,8 +1,8 @@
 /**
  * ComponentNode — renders a single system design component on the Konva canvas.
  * 
- * Handles selection, dragging, hover effects, and port rendering.
- * Uses the component catalog for icon/label lookup.
+ * Handles selection, dragging, hover effects, port rendering,
+ * and simulation overlays (health glow, SPOF badge, latency badge).
  */
 'use client';
 
@@ -10,6 +10,7 @@ import { Group, Rect, Text, Circle } from 'react-konva';
 import { useRef, useState, useCallback } from 'react';
 import type Konva from 'konva';
 import type { CanvasNode } from '@/lib/types/canvas';
+import type { NodeSimSummary } from '@/lib/simulation/types';
 import { getCatalogEntry } from '@/lib/data/componentCatalog';
 
 // ============ Colors ============
@@ -28,6 +29,13 @@ const PORT_RADIUS = 5;
 const PORT_COLOR = '#475569';
 const PORT_HOVER_COLOR = '#94a3b8';
 
+// Health glow colors
+const HEALTH_COLORS = {
+    healthy: '#22c55e',   // green
+    warning: '#f59e0b',   // amber
+    critical: '#ef4444',  // red
+} as const;
+
 // ============ Props ============
 
 interface ComponentNodeProps {
@@ -37,6 +45,9 @@ interface ComponentNodeProps {
     onDragEnd: (id: string, x: number, y: number) => void;
     onPortClick: (nodeId: string) => void;
     isConnecting: boolean;
+    // Simulation overlay data (undefined = no simulation active)
+    simState?: NodeSimSummary;
+    isSpof?: boolean;
 }
 
 // ============ Component ============
@@ -48,6 +59,8 @@ export default function ComponentNode({
     onDragEnd,
     onPortClick,
     isConnecting,
+    simState,
+    isSpof,
 }: ComponentNodeProps) {
     const groupRef = useRef<Konva.Group>(null);
     const [isHovered, setIsHovered] = useState(false);
@@ -68,6 +81,31 @@ export default function ComponentNode({
         { id: 'bottom', x: width / 2, y: height },
         { id: 'left', x: 0, y: height / 2 },
     ];
+
+    // Simulation-aware border color
+    let borderColor: string = isHovered ? colors.borderHover : colors.border;
+    let shadowColor: string | undefined = isSelected ? SELECTED_SHADOW_COLOR : undefined;
+    let shadowBlur = isSelected ? 12 : 0;
+    let shadowOpacity = isSelected ? 0.4 : 0;
+
+    if (simState && !isSelected) {
+        if (!simState.isHealthy) {
+            borderColor = HEALTH_COLORS.critical;
+            shadowColor = HEALTH_COLORS.critical;
+            shadowBlur = 14;
+            shadowOpacity = 0.5;
+        } else if (simState.avgCpuPercent > 60) {
+            borderColor = HEALTH_COLORS.warning;
+            shadowColor = HEALTH_COLORS.warning;
+            shadowBlur = 10;
+            shadowOpacity = 0.35;
+        } else {
+            borderColor = HEALTH_COLORS.healthy;
+            shadowColor = HEALTH_COLORS.healthy;
+            shadowBlur = 8;
+            shadowOpacity = 0.25;
+        }
+    }
 
     const handleClick = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -116,6 +154,16 @@ export default function ComponentNode({
         [node.id, onPortClick],
     );
 
+    // CPU utilization bar width (0–100% of node width minus padding)
+    const cpuBarWidth = simState
+        ? Math.min(1, simState.avgCpuPercent / 100) * (width - 16)
+        : 0;
+    const cpuBarColor = simState
+        ? simState.avgCpuPercent > 80 ? HEALTH_COLORS.critical
+            : simState.avgCpuPercent > 60 ? HEALTH_COLORS.warning
+                : HEALTH_COLORS.healthy
+        : HEALTH_COLORS.healthy;
+
     return (
         <Group
             ref={groupRef}
@@ -143,12 +191,12 @@ export default function ComponentNode({
                 width={width}
                 height={height}
                 fill={colors.bg}
-                stroke={isSelected ? SELECTED_SHADOW_COLOR : isHovered ? colors.borderHover : colors.border}
-                strokeWidth={isSelected ? 2.5 : isHovered ? 2 : 1.5}
+                stroke={isSelected ? SELECTED_SHADOW_COLOR : borderColor}
+                strokeWidth={isSelected ? 2.5 : simState ? 2 : isHovered ? 2 : 1.5}
                 cornerRadius={cornerRadius}
-                shadowColor={isSelected ? SELECTED_SHADOW_COLOR : undefined}
-                shadowBlur={isSelected ? 12 : 0}
-                shadowOpacity={isSelected ? 0.4 : 0}
+                shadowColor={shadowColor}
+                shadowBlur={shadowBlur}
+                shadowOpacity={shadowOpacity}
             />
 
             {/* Icon */}
@@ -210,6 +258,79 @@ export default function ComponentNode({
                         listening={false}
                     />
                 </Group>
+            )}
+
+            {/* ── Simulation Overlays ── */}
+
+            {/* SPOF badge — top-right */}
+            {isSpof && (
+                <Group x={width - 42} y={-8}>
+                    <Rect
+                        width={42}
+                        height={16}
+                        fill="#f59e0b"
+                        cornerRadius={4}
+                    />
+                    <Text
+                        text="⚠ SPOF"
+                        x={3}
+                        y={2}
+                        fontSize={9}
+                        fontFamily="Inter, system-ui, sans-serif"
+                        fontStyle="700"
+                        fill="#000"
+                        listening={false}
+                    />
+                </Group>
+            )}
+
+            {/* Latency badge — bottom-center */}
+            {simState && (
+                <Group x={width / 2 - 22} y={height + 4}>
+                    <Rect
+                        width={44}
+                        height={14}
+                        fill="#0f172a"
+                        stroke="#334155"
+                        strokeWidth={1}
+                        cornerRadius={3}
+                    />
+                    <Text
+                        text={simState.avgLatencyMs < 1
+                            ? `${simState.avgLatencyMs.toFixed(2)}ms`
+                            : `${simState.avgLatencyMs.toFixed(1)}ms`}
+                        x={3}
+                        y={1}
+                        fontSize={9}
+                        fontFamily="monospace"
+                        fill={simState.avgLatencyMs > 100 ? '#f87171' : simState.avgLatencyMs > 30 ? '#f59e0b' : '#94a3b8'}
+                        listening={false}
+                    />
+                </Group>
+            )}
+
+            {/* CPU utilization bar — thin bar at bottom of node */}
+            {simState && (
+                <>
+                    {/* Background bar */}
+                    <Rect
+                        x={8}
+                        y={height - 6}
+                        width={width - 16}
+                        height={3}
+                        fill="#1e293b"
+                        cornerRadius={1}
+                    />
+                    {/* Fill bar */}
+                    <Rect
+                        x={8}
+                        y={height - 6}
+                        width={cpuBarWidth}
+                        height={3}
+                        fill={cpuBarColor}
+                        cornerRadius={1}
+                    />
+                </>
             )}
 
             {/* Ports — visible on hover or when connecting */}
