@@ -429,9 +429,9 @@ export class SimulationRunner {
     }
 
     private getNodeCapacity(node: CanvasNode): number {
-        const replicas = node.sharedConfig.scaling?.replicas ?? 1;
+        const instances = node.sharedConfig.scaling?.instances ?? 1;
         const rps = node.sharedConfig.scaling?.nodeCapacityRps ?? 1000;
-        return replicas * rps;
+        return instances * rps;
     }
 
     private getNodeLatency(node: CanvasNode, load: number, capacity: number): number {
@@ -499,8 +499,8 @@ export class SimulationRunner {
         };
         for (const node of this.nodes) {
             if (node.type === 'client') continue;
-            const replicas = node.sharedConfig.scaling?.replicas ?? 1;
-            cost += (baseCost[node.type] ?? 50) * replicas;
+            const instances = node.sharedConfig.scaling?.instances ?? 1;
+            cost += (baseCost[node.type] ?? 50) * instances;
         }
 
         return {

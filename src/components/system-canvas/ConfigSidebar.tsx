@@ -84,8 +84,8 @@ function NodeConfig({ node }: { node: CanvasNode }) {
             {/* Scaling */}
             {layers.scaling && node.sharedConfig.scaling && (
                 <Section title="Scaling">
-                    <NumberField label="Replicas" value={node.sharedConfig.scaling.replicas} min={1} max={100}
-                        onChange={(v) => updateShared(node.id, { scaling: { ...node.sharedConfig.scaling!, replicas: v } })} />
+                    <NumberField label="Instances" value={node.sharedConfig.scaling.instances} min={1} max={100}
+                        onChange={(v) => updateShared(node.id, { scaling: { ...node.sharedConfig.scaling!, instances: v } })} />
                     <NumberField label="Capacity (RPS)" value={node.sharedConfig.scaling.nodeCapacityRps} min={10} max={100000} step={100}
                         onChange={(v) => updateShared(node.id, { scaling: { ...node.sharedConfig.scaling!, nodeCapacityRps: v } })} />
                 </Section>

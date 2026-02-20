@@ -16,8 +16,8 @@ export class AppServerModel extends ComponentModel {
         return (this.node.specificConfig as Record<string, string>).instanceType ?? 'medium';
     }
 
-    private get replicas(): number {
-        return this.node.sharedConfig.scaling?.replicas ?? 2;
+    private get instances(): number {
+        return this.node.sharedConfig.scaling?.instances ?? 1;
     }
 
     private get autoScaling(): boolean {
@@ -30,19 +30,19 @@ export class AppServerModel extends ComponentModel {
 
     processRequest(loadQps: number, concurrentConnections: number): SimulationState {
         const perInstance = INSTANCE_CAPACITY[this.instanceType] ?? 1500;
-        let activeReplicas = this.replicas;
+        let activeInstances = this.instances;
 
         // Auto-scaling: add instances if utilization > 70%
         if (this.autoScaling) {
-            const baseCapacity = perInstance * this.replicas;
+            const baseCapacity = perInstance * this.instances;
             const baseUtilization = loadQps / baseCapacity;
             if (baseUtilization > 0.7) {
                 const needed = Math.ceil(loadQps / (perInstance * 0.7));
-                activeReplicas = Math.min(needed, this.maxInstances);
+                activeInstances = Math.min(needed, this.maxInstances);
             }
         }
 
-        const capacity = perInstance * activeReplicas;
+        const capacity = perInstance * activeInstances;
         const utilization = capacity > 0 ? loadQps / capacity : 2;
 
         const baseLatency = 15; // ms (application logic)
@@ -67,7 +67,7 @@ export class AppServerModel extends ComponentModel {
 
         return {
             cpuUsagePercent: Math.min(100, utilization * 90),
-            memoryUsageGb: activeReplicas * 0.5,
+            memoryUsageGb: activeInstances * 0.5,
             latencyMs: latency,
             errorRate,
             isHealthy,
@@ -78,7 +78,7 @@ export class AppServerModel extends ComponentModel {
 
     maxCapacityQps(): number {
         const perInstance = INSTANCE_CAPACITY[this.instanceType] ?? 1500;
-        const maxReplicas = this.autoScaling ? this.maxInstances : this.replicas;
-        return perInstance * maxReplicas;
+        const maxInstances = this.autoScaling ? this.maxInstances : this.instances;
+        return perInstance * maxInstances;
     }
 }

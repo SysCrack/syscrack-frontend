@@ -61,7 +61,7 @@ export interface DisplayConfig {
 }
 
 export interface ScalingConfig {
-    replicas: number;
+    instances: number;
     nodeCapacityRps: number;
     enableSharding?: boolean;
     shardCount?: number;

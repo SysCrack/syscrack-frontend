@@ -238,7 +238,7 @@ export default function ComponentNode({
             />
 
             {/* Scaling badge */}
-            {node.sharedConfig.scaling && node.sharedConfig.scaling.replicas > 1 && (
+            {node.sharedConfig.scaling && node.sharedConfig.scaling.instances > 1 && (
                 <Group x={width - 28} y={height - 22}>
                     <Rect
                         width={20}
@@ -249,7 +249,7 @@ export default function ComponentNode({
                         cornerRadius={4}
                     />
                     <Text
-                        text={`×${node.sharedConfig.scaling.replicas}`}
+                        text={`×${node.sharedConfig.scaling.instances}`}
                         x={3}
                         y={2}
                         fontSize={10}

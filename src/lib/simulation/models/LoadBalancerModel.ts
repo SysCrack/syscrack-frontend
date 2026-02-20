@@ -1,6 +1,6 @@
 /**
  * LoadBalancerModel — distributes traffic to downstream.
- * Capacity based on replicas × per-node capacity from scaling config.
+ * Capacity based on instances × per-node capacity from scaling config.
  */
 import { ComponentModel } from '../ComponentModel';
 import type { SimulationState } from '../types';
@@ -8,8 +8,8 @@ import type { SimulationState } from '../types';
 const BASE_CAPACITY = 5000; // QPS per instance
 
 export class LoadBalancerModel extends ComponentModel {
-    private get replicas(): number {
-        return this.node.sharedConfig.scaling?.replicas ?? 2;
+    private get instances(): number {
+        return this.node.sharedConfig.scaling?.instances ?? 1;
     }
 
     private get nodeCapacity(): number {
@@ -17,7 +17,7 @@ export class LoadBalancerModel extends ComponentModel {
     }
 
     processRequest(loadQps: number, concurrentConnections: number): SimulationState {
-        const capacity = this.nodeCapacity * this.replicas;
+        const capacity = this.nodeCapacity * this.instances;
         const utilization = capacity > 0 ? loadQps / capacity : 2;
 
         const baseLatency = 1; // ms (very fast L7 proxy)
@@ -48,6 +48,6 @@ export class LoadBalancerModel extends ComponentModel {
     }
 
     maxCapacityQps(): number {
-        return this.nodeCapacity * this.replicas;
+        return this.nodeCapacity * this.instances;
     }
 }

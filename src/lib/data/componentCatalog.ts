@@ -16,14 +16,14 @@ const BASE_SHARED: SharedConfig = {
     display: { mode: 'expanded' },
 };
 
-function withScaling(replicas = 1, rps = 1000): SharedConfig {
-    return { ...BASE_SHARED, scaling: { replicas, nodeCapacityRps: rps } };
+function withScaling(instances = 1, rps = 1000): SharedConfig {
+    return { ...BASE_SHARED, scaling: { instances, nodeCapacityRps: rps } };
 }
 
-function withScalingAndConsistency(replicas = 1, rps = 1000): SharedConfig {
+function withScalingAndConsistency(instances = 1, rps = 1000): SharedConfig {
     return {
         ...BASE_SHARED,
-        scaling: { replicas, nodeCapacityRps: rps, enableSharding: false },
+        scaling: { instances, nodeCapacityRps: rps, enableSharding: false },
         consistency: { replicationStrategy: 'leader-follower', replicationFactor: 1 },
     };
 }
@@ -61,7 +61,7 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
         category: 'traffic',
         priority: 'p1',
         description: 'Distributes traffic across backend instances',
-        defaultSharedConfig: { ...withScaling(2, 5000), resilience: { circuitBreaker: false, automaticRetries: false }, trafficControl: { rateLimiting: false } },
+        defaultSharedConfig: { ...withScaling(1, 5000), resilience: { circuitBreaker: false, automaticRetries: false }, trafficControl: { rateLimiting: false } },
         defaultSpecificConfig: { algorithm: 'round-robin', healthCheckInterval: 30, stickySessions: false },
         applicableLayers: { scaling: true, consistency: false, resilience: true, trafficControl: true, sharding: false },
     },
@@ -85,7 +85,7 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
         category: 'compute',
         priority: 'p1',
         description: 'Application server handling business logic',
-        defaultSharedConfig: { ...withScaling(2, 500), resilience: { circuitBreaker: false, automaticRetries: false } },
+        defaultSharedConfig: { ...withScaling(1, 500), resilience: { circuitBreaker: false, automaticRetries: false } },
         defaultSpecificConfig: { instanceType: 'medium', autoScaling: true, minInstances: 1, maxInstances: 10 },
         applicableLayers: { scaling: true, consistency: false, resilience: true, trafficControl: false, sharding: false },
     },
@@ -157,7 +157,7 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
         description: 'Async message processing — SQS, RabbitMQ',
         defaultSharedConfig: {
             ...BASE_SHARED,
-            scaling: { replicas: 1, nodeCapacityRps: 5000 },
+            scaling: { instances: 1, nodeCapacityRps: 5000 },
             consistency: { replicationStrategy: 'leader-follower', replicationFactor: 1 },
             trafficControl: { rateLimiting: false },
         },

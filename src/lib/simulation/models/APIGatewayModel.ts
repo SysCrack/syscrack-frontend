@@ -7,8 +7,8 @@ import type { SimulationState } from '../types';
 const BASE_CAPACITY = 8000; // QPS per instance
 
 export class APIGatewayModel extends ComponentModel {
-    private get replicas(): number {
-        return this.node.sharedConfig.scaling?.replicas ?? 2;
+    private get instances(): number {
+        return this.node.sharedConfig.scaling?.instances ?? 1;
     }
 
     private get authEnabled(): boolean {
@@ -24,7 +24,7 @@ export class APIGatewayModel extends ComponentModel {
     }
 
     processRequest(loadQps: number, concurrentConnections: number): SimulationState {
-        const capacity = BASE_CAPACITY * this.replicas;
+        const capacity = BASE_CAPACITY * this.instances;
 
         // Rate limiting: reject excess
         let effectiveLoad = loadQps;
@@ -64,7 +64,7 @@ export class APIGatewayModel extends ComponentModel {
     }
 
     maxCapacityQps(): number {
-        const base = BASE_CAPACITY * this.replicas;
+        const base = BASE_CAPACITY * this.instances;
         return this.rateLimiting ? Math.min(base, this.rateLimit) : base;
     }
 }

@@ -180,18 +180,18 @@ export class SimulationEngine {
         const spofDiagnostics: SimulationDiagnostic[] = [];
         for (const node of this.nodes) {
             if (node.type === 'client') continue;
-            const replicas = node.sharedConfig.scaling?.replicas ?? 1;
+            const instances = node.sharedConfig.scaling?.instances ?? 1;
             const hasSuccessors = (this.adjacency.get(node.id)?.length ?? 0) > 0;
             const hasPredecessors = this.connections.some((c) => c.targetId === node.id);
 
-            if (replicas <= 1 && (hasSuccessors || hasPredecessors)) {
+            if (instances <= 1 && (hasSuccessors || hasPredecessors)) {
                 spofDiagnostics.push({
                     componentId: node.id,
                     componentName: node.name,
                     severity: 'warning',
                     eventType: 'spof',
                     message: `⚠ ${node.name} is a single point of failure (1 instance)`,
-                    suggestion: 'Increase replicas or enable auto-scaling for redundancy',
+                    suggestion: 'Increase instances or enable auto-scaling for redundancy',
                 });
             }
         }
@@ -415,12 +415,12 @@ export class SimulationEngine {
         };
     }
 
-    /** Cost estimate based on component count × replicas × base price. */
+    /** Cost estimate based on component count × instances × base price. */
     private estimateCost(): number {
         let cost = 0;
         for (const node of this.nodes) {
             if (node.type === 'client') continue;
-            const replicas = node.sharedConfig.scaling?.replicas ?? 1;
+            const instances = node.sharedConfig.scaling?.instances ?? 1;
             const baseCost: Partial<Record<CanvasComponentType, number>> = {
                 cdn: 50,
                 load_balancer: 25,
@@ -432,7 +432,7 @@ export class SimulationEngine {
                 object_store: 20,
                 message_queue: 30,
             };
-            cost += (baseCost[node.type] ?? 50) * replicas;
+            cost += (baseCost[node.type] ?? 50) * instances;
         }
         return Math.round(cost);
     }

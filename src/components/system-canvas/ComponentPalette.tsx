@@ -4,7 +4,7 @@
  */
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { COMPONENT_CATALOG, CATEGORIES, getCatalogByCategory } from '@/lib/data/componentCatalog';
 import type { ComponentCatalogEntry } from '@/lib/types/canvas';
 
@@ -16,13 +16,28 @@ export default function ComponentPalette({ className }: ComponentPaletteProps) {
     const [activeTab, setActiveTab] = useState<string>('traffic');
     const [searchQuery, setSearchQuery] = useState('');
 
+    // Only show thoroughly tested components in sandbox
+    const TESTED_COMPONENTS = ['client', 'load_balancer', 'app_server', 'database_sql'] as const;
+    const testedCatalog = COMPONENT_CATALOG.filter((c) => TESTED_COMPONENTS.includes(c.type as any));
+    
+    // Only show category tabs that have tested components
+    const testedCategories = new Set(testedCatalog.map((c) => c.category));
+    const visibleCategories = CATEGORIES.filter((cat) => testedCategories.has(cat.id));
+
+    // Ensure activeTab is valid (has tested components)
+    useEffect(() => {
+        if (!testedCategories.has(activeTab) && visibleCategories.length > 0) {
+            setActiveTab(visibleCategories[0].id);
+        }
+    }, [activeTab, testedCategories, visibleCategories]);
+
     const filteredComponents = searchQuery
-        ? COMPONENT_CATALOG.filter(
+        ? testedCatalog.filter(
             (c) =>
                 c.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 c.description.toLowerCase().includes(searchQuery.toLowerCase()),
         )
-        : getCatalogByCategory(activeTab);
+        : testedCatalog.filter((c) => c.category === activeTab);
 
     return (
         <div
@@ -81,7 +96,7 @@ export default function ComponentPalette({ className }: ComponentPaletteProps) {
                         flexWrap: 'wrap',
                     }}
                 >
-                    {CATEGORIES.map((cat) => (
+                    {visibleCategories.map((cat) => (
                         <button
                             key={cat.id}
                             onClick={() => setActiveTab(cat.id)}

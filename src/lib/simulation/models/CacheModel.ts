@@ -12,8 +12,8 @@ export class CacheModel extends ComponentModel {
         return (this.node.specificConfig as Record<string, boolean>).clusterMode ?? false;
     }
 
-    private get replicas(): number {
-        return this.node.sharedConfig.scaling?.replicas ?? 1;
+    private get instances(): number {
+        return this.node.sharedConfig.scaling?.instances ?? 1;
     }
 
     /** Hit rate based on read strategy + TTL. */
@@ -30,7 +30,7 @@ export class CacheModel extends ComponentModel {
     }
 
     processRequest(loadQps: number, concurrentConnections: number): SimulationState {
-        const nodes = this.clusterMode ? Math.max(3, this.replicas) : Math.max(1, this.replicas);
+        const nodes = this.clusterMode ? Math.max(3, this.instances) : Math.max(1, this.instances);
         const capacity = INSTANCE_CAPACITY_REDIS * nodes;
         const utilization = capacity > 0 ? loadQps / capacity : 2;
 
@@ -61,7 +61,7 @@ export class CacheModel extends ComponentModel {
     }
 
     maxCapacityQps(): number {
-        const nodes = this.clusterMode ? Math.max(3, this.replicas) : Math.max(1, this.replicas);
+        const nodes = this.clusterMode ? Math.max(3, this.instances) : Math.max(1, this.instances);
         return INSTANCE_CAPACITY_REDIS * nodes;
     }
 }

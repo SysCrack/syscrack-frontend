@@ -9,7 +9,7 @@ const BASE_CAPACITY_PER_PARTITION = 2000; // Messages/sec per partition
 
 export class MessageQueueModel extends ComponentModel {
     private get partitions(): number {
-        return this.node.sharedConfig.scaling?.replicas ?? 4; // reuse replicas as partition count
+        return this.node.sharedConfig.scaling?.instances ?? 4; // reuse instances as partition count
     }
 
     private get isFifo(): boolean {

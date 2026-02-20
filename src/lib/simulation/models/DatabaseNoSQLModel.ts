@@ -22,8 +22,8 @@ export class DatabaseNoSQLModel extends ComponentModel {
         return (this.node.specificConfig as Record<string, string>).consistencyLevel ?? 'eventual';
     }
 
-    private get replicas(): number {
-        return this.node.sharedConfig.scaling?.replicas ?? 1;
+    private get instances(): number {
+        return this.node.sharedConfig.scaling?.instances ?? 1;
     }
 
     private get replicationFactor(): number {
@@ -33,8 +33,8 @@ export class DatabaseNoSQLModel extends ComponentModel {
     processRequest(loadQps: number, concurrentConnections: number): SimulationState {
         const [readFactor, writeFactor, baseLatency] = ENGINE_FACTORS[this.engine] ?? [1.5, 2.0, 3.0];
 
-        const readCapacity = BASE_QPS * readFactor * Math.max(1, this.replicas);
-        const writeCapacity = BASE_QPS * writeFactor * Math.max(1, this.replicas);
+        const readCapacity = BASE_QPS * readFactor * Math.max(1, this.instances);
+        const writeCapacity = BASE_QPS * writeFactor * Math.max(1, this.instances);
         const capacity = readCapacity * 0.7 + writeCapacity * 0.3;
 
         const utilization = capacity > 0 ? loadQps / capacity : 2;
@@ -69,6 +69,6 @@ export class DatabaseNoSQLModel extends ComponentModel {
 
     maxCapacityQps(): number {
         const [readFactor, writeFactor] = ENGINE_FACTORS[this.engine] ?? [1.5, 2.0];
-        return BASE_QPS * ((readFactor + writeFactor) / 2) * Math.max(1, this.replicas);
+        return BASE_QPS * ((readFactor + writeFactor) / 2) * Math.max(1, this.instances);
     }
 }
