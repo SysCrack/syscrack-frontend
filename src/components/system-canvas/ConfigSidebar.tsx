@@ -8,6 +8,18 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { getCatalogEntry } from '@/lib/data/componentCatalog';
 import type { CanvasNode, SharedConfig } from '@/lib/types/canvas';
 
+// String enum fields that should be editable via dropdown (component type -> key -> options)
+const SPECIFIC_CONFIG_ENUMS: Partial<Record<string, Record<string, string[]>>> = {
+    load_balancer: {
+        algorithm: ['round-robin', 'least-connections', 'random', 'weighted'],
+    },
+    cache: {
+        readStrategy: ['cache-aside', 'read-through'],
+        writeStrategy: ['write-through', 'write-behind', 'write-around'],
+        evictionPolicy: ['lru', 'lfu', 'fifo', 'ttl-based', 'random'],
+    },
+};
+
 export default function ConfigSidebar() {
     const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
     const nodes = useCanvasStore((s) => s.nodes);
@@ -132,10 +144,33 @@ function NodeConfig({ node }: { node: CanvasNode }) {
 
             {/* Component-specific config */}
             <Section title={`${catalog.label} Config`}>
-                {Object.entries(node.specificConfig).map(([key, value]) => {
+                {Object.entries(
+                    node.type === 'cache' && !('maxEntries' in node.specificConfig)
+                        ? { ...node.specificConfig, maxEntries: 24 }
+                        : node.specificConfig
+                ).map(([key, value]) => {
                     if (typeof value === 'boolean') return <Toggle key={key} label={fmtLabel(key)} value={value} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
-                    if (typeof value === 'number') return <NumberField key={key} label={fmtLabel(key)} value={value} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
-                    if (typeof value === 'string') return <TextVal key={key} label={fmtLabel(key)} value={value} />;
+                    if (typeof value === 'number') {
+                        if (node.type === 'cache' && key === 'maxEntries') {
+                            return <NumberField key={key} label={fmtLabel(key)} value={value} min={1} max={1000} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
+                        }
+                        return <NumberField key={key} label={fmtLabel(key)} value={value} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
+                    }
+                    if (typeof value === 'string') {
+                        const options = SPECIFIC_CONFIG_ENUMS[node.type]?.[key];
+                        if (options) {
+                            return (
+                                <SelectField
+                                    key={key}
+                                    label={fmtLabel(key)}
+                                    value={value}
+                                    options={options}
+                                    onChange={(v) => updateSpecific(node.id, { [key]: v })}
+                                />
+                            );
+                        }
+                        return <TextVal key={key} label={fmtLabel(key)} value={value} />;
+                    }
                     return null;
                 })}
             </Section>

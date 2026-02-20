@@ -107,6 +107,7 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
             writeStrategy: 'write-around',
             evictionPolicy: 'lru',
             defaultTtl: 3600,
+            maxEntries: 24,
         },
         applicableLayers: { scaling: true, consistency: true, resilience: false, trafficControl: false, sharding: true },
     },

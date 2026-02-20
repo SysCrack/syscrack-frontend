@@ -5,7 +5,7 @@
  * are updated via worker messages. Static engine run stays on main thread.
  */
 import { create } from 'zustand';
-import type { SimulationOutput, SimulationDiagnostic, ScenarioResult, NodeSimSummary } from '@/lib/simulation/types';
+import type { SimulationOutput, SimulationDiagnostic, ScenarioResult, NodeSimSummary, NodeDetailMetrics } from '@/lib/simulation/types';
 import { SimulationEngine } from '@/lib/simulation/SimulationEngine';
 import type { RequestParticle, LiveMetrics } from '@/lib/simulation/SimulationRunner';
 import type { WorkerTickMessage } from '@/lib/simulation/simulation.worker';
@@ -176,4 +176,9 @@ export function useDiagnosticsForNode(nodeId: string): SimulationDiagnostic[] {
 export function useNodeLiveMetrics(nodeId: string): NodeSimSummary | undefined {
     const liveMetrics = useCanvasSimulationStore((s) => s.liveMetrics);
     return liveMetrics?.nodeMetrics[nodeId];
+}
+
+export function useNodeDetailMetrics(nodeId: string): NodeDetailMetrics | undefined {
+    const liveMetrics = useCanvasSimulationStore((s) => s.liveMetrics);
+    return liveMetrics?.nodeMetrics[nodeId] as NodeDetailMetrics | undefined;
 }

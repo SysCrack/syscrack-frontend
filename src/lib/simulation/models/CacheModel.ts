@@ -16,17 +16,24 @@ export class CacheModel extends ComponentModel {
         return this.node.sharedConfig.scaling?.instances ?? 1;
     }
 
-    /** Hit rate based on read strategy + TTL. */
+    /** Hit rate based on read strategy, write strategy, TTL, and eviction policy. */
     get hitRate(): number {
-        const readStrategy = (this.node.specificConfig as Record<string, string>).readStrategy ?? 'cache-aside';
-        const defaultTtl = (this.node.specificConfig as Record<string, number>).defaultTtl ?? 3600;
+        const c = this.node.specificConfig as Record<string, string | number>;
+        const readStrategy = (c.readStrategy as string) ?? 'cache-aside';
+        const writeStrategy = (c.writeStrategy as string) ?? 'write-around';
+        const evictionPolicy = (c.evictionPolicy as string) ?? 'lru';
+        const defaultTtl = (c.defaultTtl as number) ?? 3600;
 
         // Read-through has better hit rate than cache-aside (proactive population)
         const strategyBonus = readStrategy === 'read-through' ? 0.05 : 0;
         // Longer TTL = higher hit rate (less expiration churn)
         const ttlFactor = Math.min(1, defaultTtl / 7200);
+        // Write strategy: write-through keeps cache consistent (+hit), write-behind can lag slightly
+        const writeMod = writeStrategy === 'write-through' ? 0.02 : writeStrategy === 'write-behind' ? -0.01 : 0;
+        // Eviction: LFU favors hot keys (+hit), FIFO/random less predictable
+        const evictionMod = evictionPolicy === 'lfu' ? 0.02 : evictionPolicy === 'fifo' || evictionPolicy === 'random' ? -0.02 : 0;
 
-        return Math.min(0.98, 0.75 + strategyBonus + ttlFactor * 0.15);
+        return Math.min(0.98, Math.max(0.1, 0.75 + strategyBonus + ttlFactor * 0.15 + writeMod + evictionMod));
     }
 
     processRequest(loadQps: number, concurrentConnections: number): SimulationState {

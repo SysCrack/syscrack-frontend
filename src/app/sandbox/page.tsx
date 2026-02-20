@@ -13,6 +13,7 @@
 
 import dynamic from 'next/dynamic';
 import ConfigSidebar from '@/components/system-canvas/ConfigSidebar';
+import LiveComponentInspector from '@/components/system-canvas/LiveComponentInspector';
 import SimulationControls from '@/components/system-canvas/SimulationControls';
 import SimulationResults from '@/components/system-canvas/SimulationResults';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -83,15 +84,18 @@ function SandboxTitleBar() {
 
 /**
  * Right panel logic:
- * - If simulation completed → show SimulationResults
- * - Else if a component is selected → show ConfigSidebar
+ * - If simulation active AND one node selected → LiveComponentInspector
+ * - If simulation active AND no node selected → SimulationResults
+ * - If simulation idle AND one node selected → ConfigSidebar
  * - Else → nothing
  */
 function RightPanel() {
     const simStatus = useCanvasSimulationStore((s) => s.status);
     const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
+    const simActive = simStatus === 'running' || simStatus === 'paused' || simStatus === 'completed';
 
-    if (simStatus === 'running' || simStatus === 'paused' || simStatus === 'completed') return <SimulationResults />;
+    if (simActive && selectedNodeIds.length === 1) return <LiveComponentInspector nodeId={selectedNodeIds[0]} />;
+    if (simActive) return <SimulationResults />;
     if (selectedNodeIds.length === 1) return <ConfigSidebar />;
     return null;
 }

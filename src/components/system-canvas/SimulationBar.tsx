@@ -74,7 +74,7 @@ export default function SimulationBar() {
             {/* Metrics */}
             {result && (
                 <>
-                    <Metric label="RPS" value={result.metrics.requestsPerSecond.toLocaleString()} color="#3b82f6" />
+                    <Metric label="RPS" value={Math.round(result.metrics.requestsPerSecond).toLocaleString()} color="#3b82f6" />
                     <Metric label="Avg" value={`${result.metrics.avgLatencyMs.toFixed(1)}ms`} color="#a78bfa" />
                     <Metric label="P99" value={`${result.metrics.p99LatencyMs.toFixed(1)}ms`} color="#f59e0b" />
                     <Metric label="Err" value={`${(result.metrics.errorRate * 100).toFixed(2)}%`} color={result.metrics.errorRate > 0.01 ? '#f87171' : '#22c55e'} />

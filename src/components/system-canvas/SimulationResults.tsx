@@ -75,7 +75,7 @@ export default function SimulationResults() {
 
             {/* Score breakdown */}
             <Section title="Performance">
-                <MetricRow label="Throughput" value={`${result.metrics.requestsPerSecond.toLocaleString()} RPS`} />
+                <MetricRow label="Throughput" value={`${Math.round(result.metrics.requestsPerSecond).toLocaleString()} RPS`} />
                 <MetricRow label="Avg Latency" value={`${result.metrics.avgLatencyMs.toFixed(1)} ms`} />
                 <MetricRow label="P50" value={`${result.metrics.p50LatencyMs.toFixed(1)} ms`} />
                 <MetricRow label="P95" value={`${result.metrics.p95LatencyMs.toFixed(1)} ms`} />

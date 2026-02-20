@@ -150,7 +150,7 @@ export default function SimulationControls() {
             {/* Live metrics */}
             {(isLive || result) && (
                 <>
-                    <Metric label="RPS" value={rps.toLocaleString()} color="#3b82f6" />
+                    <Metric label="RPS" value={Math.round(rps).toLocaleString()} color="#3b82f6" />
                     <Metric label="Avg" value={`${avgLat.toFixed(1)}ms`} color="#a78bfa" />
                     <Metric
                         label="Err"

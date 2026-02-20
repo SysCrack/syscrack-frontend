@@ -207,6 +207,69 @@ export class SimulationEngine {
         return typeof rps === 'number' && rps > 0 ? rps : 1000;
     }
 
+    /** Get Load Balancer algorithm from node config. */
+    private getLBAlgorithm(nodeId: string): string {
+        const node = this.nodes.find((n) => n.id === nodeId);
+        if (!node) return 'round-robin';
+        const algo = (node.specificConfig as Record<string, unknown>).algorithm as string;
+        return algo || 'round-robin';
+    }
+
+    /**
+     * Distribute inputQps from an LB to successors according to configured algorithm.
+     * Mutates nodeLoads in place.
+     */
+    private distributeLBLoad(
+        nodeId: string,
+        inputQps: number,
+        successors: string[],
+        nodeLoads: Map<string, number>,
+        history: Map<string, SimulationState[]>,
+    ): void {
+        if (successors.length === 0 || inputQps <= 0) return;
+        const algo = this.getLBAlgorithm(nodeId);
+
+        switch (algo) {
+            case 'least-connections': {
+                // Prefer successors with lower current load (use previous tick's throughput as proxy for "connections")
+                const loads = successors.map((s) => {
+                    const prevStates = history.get(s) ?? [];
+                    const currentLoad = nodeLoads.get(s) ?? 0;
+                    const prevThroughput = prevStates.length > 0 ? prevStates[prevStates.length - 1].throughputQps : 0;
+                    return { s, busy: currentLoad + prevThroughput * 0.5 };
+                });
+                const totalInv = loads.reduce((sum, { busy }) => sum + 1 / (1 + busy), 0);
+                if (totalInv <= 0) {
+                    const per = inputQps / successors.length;
+                    for (const s of successors) nodeLoads.set(s, (nodeLoads.get(s) ?? 0) + per);
+                } else {
+                    for (const { s, busy } of loads) {
+                        const share = (1 / (1 + busy)) / totalInv;
+                        nodeLoads.set(s, (nodeLoads.get(s) ?? 0) + inputQps * share);
+                    }
+                }
+                break;
+            }
+            case 'random': {
+                const weights = successors.map(() => Math.random());
+                const sum = weights.reduce((a, b) => a + b, 0);
+                for (let i = 0; i < successors.length; i++) {
+                    const s = successors[i];
+                    const share = sum > 0 ? weights[i] / sum : 1 / successors.length;
+                    nodeLoads.set(s, (nodeLoads.get(s) ?? 0) + inputQps * share);
+                }
+                break;
+            }
+            case 'round-robin':
+            case 'weighted':
+            default: {
+                const splitQps = inputQps / successors.length;
+                for (const s of successors) nodeLoads.set(s, (nodeLoads.get(s) ?? 0) + splitQps);
+                break;
+            }
+        }
+    }
+
     private runScenario(
         scenario: SimulationScenario,
         durationSeconds: number,
@@ -274,9 +337,7 @@ export class SimulationEngine {
                     const nodeType = this.nodeTypes.get(nodeId)!;
 
                     if (nodeType === 'load_balancer') {
-                        // LB splits evenly
-                        const splitQps = inputQps / sorted.length;
-                        for (const s of sorted) nodeLoads.set(s, (nodeLoads.get(s) ?? 0) + splitQps);
+                        this.distributeLBLoad(nodeId, inputQps, sorted, nodeLoads, history);
                     } else if (nodeType === 'cache' || nodeType === 'cdn') {
                         // Cache/CDN reduces via hit rate
                         const cacheModel = model as CacheModel | CDNModel;

@@ -16,28 +16,25 @@ export default function ComponentPalette({ className }: ComponentPaletteProps) {
     const [activeTab, setActiveTab] = useState<ComponentCategory>('traffic');
     const [searchQuery, setSearchQuery] = useState('');
 
-    // Only show thoroughly tested components in sandbox
-    const TESTED_COMPONENTS = ['client', 'load_balancer', 'app_server', 'database_sql'] as const;
-    const testedCatalog = COMPONENT_CATALOG.filter((c) => TESTED_COMPONENTS.includes(c.type as any));
-    
-    // Only show category tabs that have tested components
-    const testedCategories = new Set<ComponentCategory>(testedCatalog.map((c) => c.category));
-    const visibleCategories = CATEGORIES.filter((cat) => testedCategories.has(cat.id as ComponentCategory));
+    // Phase 4: show all P1 components (catalog + simulation models exist for all)
+    const paletteCatalog = COMPONENT_CATALOG.filter((c) => c.priority === 'p1');
+    const paletteCategories = new Set<ComponentCategory>(paletteCatalog.map((c) => c.category));
+    const visibleCategories = CATEGORIES.filter((cat) => paletteCategories.has(cat.id as ComponentCategory));
 
-    // Ensure activeTab is valid (has tested components)
+    // Ensure activeTab is valid (has palette components)
     useEffect(() => {
-        if (!testedCategories.has(activeTab) && visibleCategories.length > 0) {
+        if (!paletteCategories.has(activeTab) && visibleCategories.length > 0) {
             setActiveTab(visibleCategories[0].id as ComponentCategory);
         }
-    }, [activeTab, testedCategories, visibleCategories]);
+    }, [activeTab, paletteCategories, visibleCategories]);
 
     const filteredComponents = searchQuery
-        ? testedCatalog.filter(
+        ? paletteCatalog.filter(
             (c) =>
                 c.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 c.description.toLowerCase().includes(searchQuery.toLowerCase()),
         )
-        : testedCatalog.filter((c) => c.category === activeTab);
+        : paletteCatalog.filter((c) => c.category === activeTab);
 
     return (
         <div

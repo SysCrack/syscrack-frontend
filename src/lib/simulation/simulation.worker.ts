@@ -27,9 +27,11 @@ export type WorkerTickMessage = {
 let runner: SimulationRunner | null = null;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let lastTime = 0;
+let loopActive = false;
 const TARGET_MS = 1000 / 60; // ~60fps
 
 function stopLoop() {
+    loopActive = false;
     if (intervalId !== null) {
         clearInterval(intervalId);
         intervalId = null;
@@ -38,9 +40,10 @@ function stopLoop() {
 
 function startLoop() {
     if (intervalId !== null) return;
+    loopActive = true;
     lastTime = performance.now();
     intervalId = setInterval(() => {
-        if (!runner?.isRunning) return;
+        if (!loopActive || !runner?.isRunning) return;
         const now = performance.now();
         const dt = Math.min(now - lastTime, 100);
         lastTime = now;
@@ -69,8 +72,8 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
             break;
         }
         case 'pause': {
+            stopLoop(); // Stop interval first so no further step() runs
             if (runner) runner.pause();
-            stopLoop();
             break;
         }
         case 'setSpeed': {

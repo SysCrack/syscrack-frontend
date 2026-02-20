@@ -14,7 +14,122 @@
  *   - DB/Queue/Store: absorbs (leaf node)
  */
 import type { CanvasNode, CanvasConnection, CanvasComponentType } from '@/lib/types/canvas';
-import type { NodeSimSummary } from './types';
+import type { NodeSimSummary, NodeDetailMetrics, CacheEntry } from './types';
+
+// ── Cache entry simulator (bounded entries, eviction by policy) ──
+
+const CACHE_KEY_POOL: string[] = [];
+for (let i = 1; i <= 12; i++) CACHE_KEY_POOL.push(`/user/${i}`);
+for (let i = 1; i <= 8; i++) CACHE_KEY_POOL.push(`/product/${i}`);
+for (let i = 1; i <= 4; i++) CACHE_KEY_POOL.push(`/session/${i}`);
+
+const CACHE_ENTRIES_CAP = 1000; // max user-configurable ceiling
+
+interface CacheEntryState {
+    key: string;
+    insertedAt: number;
+    lastAccessAt: number;
+    accessCount: number;
+}
+
+class CacheEntrySimulator {
+    private entries = new Map<string, CacheEntryState>();
+    private readonly maxEntries: number;
+    private readonly evictionPolicy: string;
+    private readonly ttl: number;
+    private simTick = 0;
+
+    constructor(maxEntries: number, evictionPolicy: string, ttl: number) {
+        this.maxEntries = Math.min(Math.max(1, maxEntries), CACHE_ENTRIES_CAP);
+        this.evictionPolicy = evictionPolicy || 'lru';
+        this.ttl = ttl;
+    }
+
+    private static readonly TICKS_PER_SECOND = 60; // ~60 sim steps per real second
+
+    advanceTick() {
+        this.simTick++;
+        // Proactive TTL expiration: remove entries that have exceeded their TTL
+        if (this.evictionPolicy === 'ttl-based' && this.ttl > 0) {
+            const ttlTicks = this.ttl * CacheEntrySimulator.TICKS_PER_SECOND;
+            for (const [key, e] of Array.from(this.entries.entries())) {
+                if (this.simTick - e.insertedAt > ttlTicks) {
+                    this.entries.delete(key);
+                }
+            }
+        }
+    }
+
+    recordHit(key: string) {
+        const existing = this.entries.get(key);
+        if (existing) {
+            existing.lastAccessAt = this.simTick;
+            existing.accessCount++;
+            return;
+        }
+        this.recordMiss(key);
+    }
+
+    recordMiss(key: string) {
+        if (this.entries.has(key)) return;
+        if (this.entries.size >= this.maxEntries) {
+            const evictKey = this.pickEvictionCandidate();
+            if (evictKey) this.entries.delete(evictKey);
+        }
+        if (this.entries.size < this.maxEntries) {
+            this.entries.set(key, {
+                key,
+                insertedAt: this.simTick,
+                lastAccessAt: this.simTick,
+                accessCount: 1,
+            });
+        }
+    }
+
+    private pickEvictionCandidate(): string | null {
+        if (this.entries.size === 0) return null;
+        const list = Array.from(this.entries.entries());
+        switch (this.evictionPolicy) {
+            case 'lru':
+                return list.reduce((a, b) => (a[1].lastAccessAt < b[1].lastAccessAt ? a : b))[0];
+            case 'lfu':
+                return list.reduce((a, b) => (a[1].accessCount < b[1].accessCount ? a : b))[0];
+            case 'fifo':
+                return list.reduce((a, b) => (a[1].insertedAt < b[1].insertedAt ? a : b))[0];
+            case 'random':
+                return list[Math.floor(Math.random() * list.length)][0];
+            case 'ttl-based': {
+                const ttlTicks = this.ttl * CacheEntrySimulator.TICKS_PER_SECOND;
+                const expired = list.filter(([, e]) => this.simTick - e.insertedAt > ttlTicks);
+                const candidates = expired.length > 0 ? expired : list;
+                return candidates.reduce((a, b) => (a[1].insertedAt < b[1].insertedAt ? a : b))[0];
+            }
+            default:
+                return list[0][0];
+        }
+    }
+
+    getEntries(): CacheEntry[] {
+        const evictKey = this.entries.size >= this.maxEntries ? this.pickEvictionCandidate() : null;
+        const entries = Array.from(this.entries.values()).map((e) => ({
+            key: e.key,
+            age: Math.max(0, this.simTick - e.insertedAt),
+            ttl: this.ttl,
+            accessCount: e.accessCount,
+            willEvict: evictKey === e.key,
+        }));
+        // Sort so eviction candidate appears first (visible in truncated list)
+        return entries.sort((a, b) => (a.willEvict ? 0 : 1) - (b.willEvict ? 0 : 1));
+    }
+
+    static keyFromPool(tick: number): string {
+        return CACHE_KEY_POOL[Math.abs(tick) % CACHE_KEY_POOL.length];
+    }
+
+    static randomKeyFromPool(): string {
+        return CACHE_KEY_POOL[Math.floor(Math.random() * CACHE_KEY_POOL.length)];
+    }
+}
 
 // ── Particle ──
 
@@ -35,7 +150,7 @@ export interface LiveMetrics {
     avgLatencyMs: number;
     errorRate: number;
     estimatedCostMonthly: number;
-    nodeMetrics: Record<string, NodeSimSummary>;
+    nodeMetrics: Record<string, NodeDetailMetrics>;
 }
 
 // ── Callback ──
@@ -72,6 +187,24 @@ export class SimulationRunner {
     private nodeRequestCount: Map<string, number> = new Map();
     private nodeErrorCount: Map<string, number> = new Map();
     private nodeLatencySum: Map<string, number> = new Map();
+
+    // Inspector: cache/CDN hits and misses, cache entry simulator
+    private cacheHits: Map<string, number> = new Map();
+    private cacheMisses: Map<string, number> = new Map();
+    private cacheSimulators: Map<string, CacheEntrySimulator> = new Map();
+
+    // LB: requests sent per backend (nodeId -> targetId -> count)
+    private lbSentRequests: Map<string, Map<string, number>> = new Map();
+
+    // Message queue: enqueued, processed, dead-lettered per node
+    private mqEnqueued: Map<string, number> = new Map();
+    private mqProcessed: Map<string, number> = new Map();
+    private mqDeadLettered: Map<string, number> = new Map();
+    private mqProcessAccumulator: Map<string, number> = new Map();
+
+    // API Gateway: allowance per step (reset each step), dropped cumulative
+    private apiGatewayAllowanceRemaining: Map<string, number> = new Map();
+    private apiGatewayDropped: Map<string, number> = new Map();
 
     // Graph
     private adjacency: Map<string, string[]> = new Map();        // nodeId → [targetNodeId]
@@ -112,6 +245,27 @@ export class SimulationRunner {
             this.nodeLatencySum.set(node.id, 0);
             if (node.type === 'client') {
                 this.clientAccumulators.set(node.id, 0);
+            }
+            if (node.type === 'cache' || node.type === 'cdn') {
+                this.cacheHits.set(node.id, 0);
+                this.cacheMisses.set(node.id, 0);
+                const c = node.specificConfig as Record<string, unknown>;
+                const ev = (c.evictionPolicy as string) ?? 'lru';
+                const ttl = (c.defaultTtl as number) ?? (c.cacheTtl as number) ?? 3600;
+                const maxEntries = node.type === 'cache' ? Math.min(1000, Math.max(1, (c.maxEntries as number) ?? 24)) : 24;
+                this.cacheSimulators.set(node.id, new CacheEntrySimulator(maxEntries, ev, ttl));
+            }
+            if (node.type === 'load_balancer') {
+                this.lbSentRequests.set(node.id, new Map());
+            }
+            if (node.type === 'message_queue') {
+                this.mqEnqueued.set(node.id, 0);
+                this.mqProcessed.set(node.id, 0);
+                this.mqDeadLettered.set(node.id, 0);
+                this.mqProcessAccumulator.set(node.id, 0);
+            }
+            if (node.type === 'api_gateway') {
+                this.apiGatewayDropped.set(node.id, 0);
             }
         }
         for (const conn of this.connections) {
@@ -155,6 +309,16 @@ export class SimulationRunner {
         this.nodeRequestCount.clear();
         this.nodeErrorCount.clear();
         this.nodeLatencySum.clear();
+        this.cacheHits.clear();
+        this.cacheMisses.clear();
+        this.cacheSimulators.clear();
+        this.lbSentRequests.clear();
+        this.mqEnqueued.clear();
+        this.mqProcessed.clear();
+        this.mqDeadLettered.clear();
+        this.mqProcessAccumulator.clear();
+        this.apiGatewayAllowanceRemaining.clear();
+        this.apiGatewayDropped.clear();
         for (const node of this.nodes) {
             this.nodeActiveCount.set(node.id, 0);
             this.nodeRecentArrivals.set(node.id, 0);
@@ -164,6 +328,27 @@ export class SimulationRunner {
             this.nodeLatencySum.set(node.id, 0);
             if (node.type === 'client') {
                 this.clientAccumulators.set(node.id, 0);
+            }
+            if (node.type === 'cache' || node.type === 'cdn') {
+                this.cacheHits.set(node.id, 0);
+                this.cacheMisses.set(node.id, 0);
+                const c = node.specificConfig as Record<string, unknown>;
+                const ev = (c.evictionPolicy as string) ?? 'lru';
+                const ttl = (c.defaultTtl as number) ?? (c.cacheTtl as number) ?? 3600;
+                const maxEntries = node.type === 'cache' ? Math.min(1000, Math.max(1, (c.maxEntries as number) ?? 24)) : 24;
+                this.cacheSimulators.set(node.id, new CacheEntrySimulator(maxEntries, ev, ttl));
+            }
+            if (node.type === 'load_balancer') {
+                this.lbSentRequests.set(node.id, new Map());
+            }
+            if (node.type === 'message_queue') {
+                this.mqEnqueued.set(node.id, 0);
+                this.mqProcessed.set(node.id, 0);
+                this.mqDeadLettered.set(node.id, 0);
+                this.mqProcessAccumulator.set(node.id, 0);
+            }
+            if (node.type === 'api_gateway') {
+                this.apiGatewayDropped.set(node.id, 0);
             }
         }
         nextParticleId = 0;
@@ -184,6 +369,28 @@ export class SimulationRunner {
         if (!this.running) return;
 
         const cappedDt = Math.min(dt, 100);
+
+        // Advance cache simulators (for entry age / eviction)
+        for (const sim of this.cacheSimulators.values()) {
+            sim.advanceTick();
+        }
+        // Reset API Gateway allowance this step (rate limit per second -> per dt)
+        for (const node of this.nodes) {
+            if (node.type === 'api_gateway') {
+                const tc = node.sharedConfig.trafficControl;
+                const limit = (tc?.rateLimiting && typeof tc.rateLimit === 'number') ? tc.rateLimit : 10000;
+                this.apiGatewayAllowanceRemaining.set(node.id, limit * (cappedDt / 1000));
+            }
+        }
+        // Advance message queue processing (drain by capacity)
+        for (const node of this.nodes) {
+            if (node.type !== 'message_queue') continue;
+            const cap = this.getNodeCapacity(node);
+            const enq = this.mqEnqueued.get(node.id) ?? 0;
+            const proc = this.mqProcessed.get(node.id) ?? 0;
+            const toProcess = Math.min(enq - proc, cap * (cappedDt / 1000));
+            this.mqProcessed.set(node.id, proc + toProcess);
+        }
 
         // Base travel time: takes 1500ms to cross a connection at 1.0x speed
         const travelTimeMs = 1500;
@@ -303,6 +510,14 @@ export class SimulationRunner {
             this.spawnFromLB(node, outConns, count);
         } else if (nodeType === 'cache' || nodeType === 'cdn') {
             this.spawnFromCache(node, outConns, count);
+        } else if (nodeType === 'api_gateway') {
+            const allowance = this.apiGatewayAllowanceRemaining.get(node.id) ?? 0;
+            const allowed = Math.min(count, Math.max(0, allowance));
+            this.apiGatewayAllowanceRemaining.set(node.id, allowance - allowed);
+            this.apiGatewayDropped.set(node.id, (this.apiGatewayDropped.get(node.id) ?? 0) + (count - allowed));
+            for (const conn of outConns) {
+                this.emitParticle(conn, allowed);
+            }
         } else {
             // Default: broadcast to all downstream
             for (const conn of outConns) {
@@ -316,17 +531,22 @@ export class SimulationRunner {
 
         if (outConns.length === 0) return;
 
+        const recordSent = (targetId: string, n: number) => {
+            const m = this.lbSentRequests.get(node.id)!;
+            m.set(targetId, (m.get(targetId) ?? 0) + n);
+        };
+
         switch (algo) {
             case 'round-robin': {
-                // Send each batch sequentially to the next connection
                 const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
                 this.rrCounters.set(node.id, idx + 1);
-                this.emitParticle(outConns[idx], count);
+                const conn = outConns[idx];
+                this.emitParticle(conn, count);
+                recordSent(conn.targetId, count);
                 break;
             }
 
             case 'least-connections': {
-                // Pick the downstream target with fewest active particles
                 let minConn = outConns[0];
                 let minCount = Infinity;
                 for (const conn of outConns) {
@@ -337,21 +557,24 @@ export class SimulationRunner {
                     }
                 }
                 this.emitParticle(minConn, count);
+                recordSent(minConn.targetId, count);
                 break;
             }
 
             case 'random': {
                 const idx = Math.floor(Math.random() * outConns.length);
-                this.emitParticle(outConns[idx], count);
+                const conn = outConns[idx];
+                this.emitParticle(conn, count);
+                recordSent(conn.targetId, count);
                 break;
             }
 
             case 'weighted':
             default: {
-                // Even split (weighted would need weights in config)
                 const perConn = Math.max(1, Math.round(count / outConns.length));
                 for (const conn of outConns) {
                     this.emitParticle(conn, perConn);
+                    recordSent(conn.targetId, perConn);
                 }
                 break;
             }
@@ -359,13 +582,21 @@ export class SimulationRunner {
     }
 
     private spawnFromCache(node: CanvasNode, outConns: CanvasConnection[], count: number) {
-        // Cache/CDN hit rate — absorb hits, forward misses
         const hitRate = this.getCacheHitRate(node);
         const misses = Math.max(1, Math.round(count * (1 - hitRate)));
+        const hits = Math.round(Math.max(0, count - misses));
 
-        // Forward misses downstream
+        this.cacheHits.set(node.id, (this.cacheHits.get(node.id) ?? 0) + hits);
+        this.cacheMisses.set(node.id, (this.cacheMisses.get(node.id) ?? 0) + misses);
+
+        const sim = this.cacheSimulators.get(node.id);
+        if (sim) {
+            for (let i = 0; i < hits; i++) sim.recordHit(CacheEntrySimulator.randomKeyFromPool());
+            for (let i = 0; i < misses; i++) sim.recordMiss(CacheEntrySimulator.randomKeyFromPool());
+        }
+
         for (const conn of outConns) {
-            this.emitParticle(conn, misses, '#22d3ee'); // still healthy, just reduced
+            this.emitParticle(conn, misses, '#22d3ee');
         }
     }
 
@@ -410,6 +641,14 @@ export class SimulationRunner {
             (this.nodeLatencySum.get(particle.targetId) ?? 0) + latency * particle.count,
         );
 
+        // Message queue: track enqueued (arrivals at queue)
+        if (targetNode.type === 'message_queue') {
+            this.mqEnqueued.set(
+                particle.targetId,
+                (this.mqEnqueued.get(particle.targetId) ?? 0) + particle.count,
+            );
+        }
+
         // Propagate downstream (unless it's a leaf)
         const isLeaf = this.isLeafNode(targetNode.type);
         if (!isLeaf) {
@@ -444,13 +683,19 @@ export class SimulationRunner {
     }
 
     private getCacheHitRate(node: CanvasNode): number {
-        const specific = node.specificConfig as Record<string, unknown>;
-        const ttl = (specific.defaultTtl as number) ?? (specific.cacheTtl as number) ?? 3600;
-        const strategy = (specific.readStrategy as string) ?? 'cache-aside';
+        const c = node.specificConfig as Record<string, unknown>;
+        const ttl = (c.defaultTtl as number) ?? (c.cacheTtl as number) ?? 3600;
+        const readStrategy = (c.readStrategy as string) ?? 'cache-aside';
+        const writeStrategy = (c.writeStrategy as string) ?? 'write-around';
+        const evictionPolicy = (c.evictionPolicy as string) ?? 'lru';
         let hitRate = 0.85;
-        if (strategy === 'read-through') hitRate = 0.9;
+        if (readStrategy === 'read-through') hitRate = 0.9;
         if (ttl > 7200) hitRate += 0.05;
         if (ttl < 600) hitRate -= 0.15;
+        if (writeStrategy === 'write-through') hitRate += 0.02;
+        else if (writeStrategy === 'write-behind') hitRate -= 0.01;
+        if (evictionPolicy === 'lfu') hitRate += 0.02;
+        else if (evictionPolicy === 'fifo' || evictionPolicy === 'random') hitRate -= 0.02;
         return Math.min(0.99, Math.max(0.1, hitRate));
     }
 
@@ -491,7 +736,7 @@ export class SimulationRunner {
         let currentClientRps = 0;
         let totalErrors = 0;
         let totalLatency = 0;
-        const nodeMetrics: Record<string, NodeSimSummary> = {};
+        const nodeMetrics: Record<string, NodeDetailMetrics> = {};
 
         for (const node of this.nodes) {
             const reqs = this.nodeRequestCount.get(node.id) ?? 0;
@@ -508,16 +753,161 @@ export class SimulationRunner {
             const capacity = this.getNodeCapacity(node);
             const currentRps = this.nodeRpsEma.get(node.id) ?? 0;
             const avgCpu = capacity > 0 ? Math.min(100, (currentRps / Math.max(capacity, 1)) * 100) : 0;
+            const utilization = capacity > 0 ? Math.min(1, currentRps / capacity) : 0;
 
-            nodeMetrics[node.id] = {
+            const detail: NodeDetailMetrics = {
                 avgCpuPercent: Math.round(avgCpu * 10) / 10,
                 avgLatencyMs: reqs > 0 ? Math.round(latSum / reqs * 100) / 100 : 0,
                 avgErrorRate: reqs > 0 ? errs / reqs : 0,
                 isHealthy: reqs === 0 || errs / reqs < 0.1,
+                currentRps: Math.round(currentRps),
+                totalRequests: reqs,
+                totalErrors: errs,
+                capacity,
+                utilization: Math.round(utilization * 1000) / 1000,
             };
+
+            const c = node.specificConfig as Record<string, unknown>;
+            const sc = node.sharedConfig;
+
+            switch (node.type) {
+                case 'cache': {
+                    const hits = this.cacheHits.get(node.id) ?? 0;
+                    const misses = this.cacheMisses.get(node.id) ?? 0;
+                    const total = hits + misses;
+                    detail.componentDetail = {
+                        kind: 'cache',
+                        hitRate: total > 0 ? hits / total : 0,
+                        hits,
+                        misses,
+                        entries: this.cacheSimulators.get(node.id)?.getEntries() ?? [],
+                        evictionPolicy: (c.evictionPolicy as string) ?? 'lru',
+                        readStrategy: (c.readStrategy as string) ?? 'cache-aside',
+                        writeStrategy: (c.writeStrategy as string) ?? 'write-around',
+                        ttl: (c.defaultTtl as number) ?? 3600,
+                        maxEntries: Math.min(1000, Math.max(1, (c.maxEntries as number) ?? 24)),
+                    };
+                    break;
+                }
+                case 'cdn': {
+                    const hits = this.cacheHits.get(node.id) ?? 0;
+                    const misses = this.cacheMisses.get(node.id) ?? 0;
+                    const total = hits + misses;
+                    detail.componentDetail = {
+                        kind: 'cdn',
+                        hitRate: total > 0 ? hits / total : 0,
+                        hits,
+                        misses,
+                        edgeLocations: (c.edgeLocations as number) ?? 10,
+                        ttl: (c.cacheTtl as number) ?? 3600,
+                    };
+                    break;
+                }
+                case 'load_balancer': {
+                    const sentMap = this.lbSentRequests.get(node.id);
+                    const backends = (this.adjacency.get(node.id) ?? []).map((targetId) => {
+                        const targetNode = this.nodeMap.get(targetId);
+                        return {
+                            nodeId: targetId,
+                            name: targetNode?.name ?? targetId,
+                            sentRequests: sentMap?.get(targetId) ?? 0,
+                            activeConnections: this.nodeActiveCount.get(targetId) ?? 0,
+                        };
+                    });
+                    detail.componentDetail = {
+                        kind: 'load_balancer',
+                        algorithm: (c.algorithm as string) ?? 'round-robin',
+                        backends,
+                    };
+                    break;
+                }
+                case 'app_server': {
+                    const instances = sc.scaling?.instances ?? 1;
+                    detail.componentDetail = {
+                        kind: 'app_server',
+                        activeInstances: instances,
+                        maxInstances: (c.maxInstances as number) ?? 10,
+                        autoScaling: (c.autoScaling as boolean) ?? false,
+                        instanceType: (c.instanceType as string) ?? 'medium',
+                    };
+                    break;
+                }
+                case 'database_sql': {
+                    const cap = this.getNodeCapacity(node);
+                    detail.componentDetail = {
+                        kind: 'database_sql',
+                        engine: (c.engine as string) ?? 'postgresql',
+                        readCapacity: Math.round(cap * 0.8),
+                        writeCapacity: Math.round(cap * 0.2),
+                        readReplicas: (c.readReplicas as number) ?? 0,
+                        connectionPooling: (c.connectionPooling as boolean) ?? true,
+                        activeConnections: this.nodeActiveCount.get(node.id) ?? 0,
+                    };
+                    break;
+                }
+                case 'database_nosql': {
+                    const cap = this.getNodeCapacity(node);
+                    detail.componentDetail = {
+                        kind: 'database_nosql',
+                        engine: (c.engine as string) ?? 'dynamodb',
+                        consistencyLevel: (c.consistencyLevel as string) ?? 'eventual',
+                        capacity: cap,
+                        utilization,
+                    };
+                    break;
+                }
+                case 'message_queue': {
+                    const enq = this.mqEnqueued.get(node.id) ?? 0;
+                    const proc = this.mqProcessed.get(node.id) ?? 0;
+                    detail.componentDetail = {
+                        kind: 'message_queue',
+                        partitions: sc.scaling?.instances ?? 1,
+                        isFifo: (c.type as string) === 'fifo',
+                        queueDepth: Math.max(0, enq - proc),
+                        enqueued: enq,
+                        processed: proc,
+                        deadLettered: this.mqDeadLettered.get(node.id) ?? 0,
+                    };
+                    break;
+                }
+                case 'object_store': {
+                    detail.componentDetail = {
+                        kind: 'object_store',
+                        storageClass: (c.storageClass as string) ?? 'standard',
+                        capacity,
+                        utilization,
+                    };
+                    break;
+                }
+                case 'api_gateway': {
+                    const reqCount = this.nodeRequestCount.get(node.id) ?? 0;
+                    const dropped = this.apiGatewayDropped.get(node.id) ?? 0;
+                    const tc = sc.trafficControl;
+                    const rateLimit = (tc?.rateLimiting && typeof tc.rateLimit === 'number') ? tc.rateLimit : 10000;
+                    detail.componentDetail = {
+                        kind: 'api_gateway',
+                        authEnabled: (c.authEnabled as boolean) ?? true,
+                        rateLimiting: tc?.rateLimiting ?? false,
+                        rateLimit,
+                        allowed: Math.max(0, reqCount - dropped),
+                        dropped,
+                    };
+                    break;
+                }
+                case 'client': {
+                    detail.componentDetail = {
+                        kind: 'client',
+                        requestsPerSecond: this.getClientRps(node),
+                    };
+                    break;
+                }
+                default:
+                    break;
+            }
+
+            nodeMetrics[node.id] = detail;
         }
 
-        // Cost estimation
         let cost = 0;
         const baseCost: Partial<Record<CanvasComponentType, number>> = {
             cdn: 50, load_balancer: 25, api_gateway: 35, app_server: 80,
