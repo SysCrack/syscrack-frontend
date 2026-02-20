@@ -129,6 +129,14 @@ export class SimulationRunner {
         this.loop(this.lastFrameTime);
     }
 
+    /** For Web Worker: set running so step(dt) is applied when driven by setInterval. */
+    startForExternalLoop() {
+        if (this.running) return;
+        this.running = true;
+        this.lastFrameTime = performance.now();
+        this.accumulator = 0;
+    }
+
     pause() {
         this.running = false;
         cancelAnimationFrame(this.rafId);
@@ -166,17 +174,20 @@ export class SimulationRunner {
 
     get isRunning() { return this.running; }
 
-    // ── Main loop ──
+    // ── Main loop (main thread uses RAF; worker uses setInterval and calls step(dt)) ──
 
-    private loop = (now: number) => {
+    /**
+     * Perform one simulation frame. Call from requestAnimationFrame (main) or setInterval (worker).
+     * @param dt elapsed time in ms (capped by caller, e.g. 100ms)
+     */
+    step(dt: number): void {
         if (!this.running) return;
 
-        const dt = Math.min(now - this.lastFrameTime, 100); // cap at 100ms
-        this.lastFrameTime = now;
+        const cappedDt = Math.min(dt, 100);
 
         // Base travel time: takes 1500ms to cross a connection at 1.0x speed
         const travelTimeMs = 1500;
-        const tDelta = (dt / travelTimeMs) * this.speed;
+        const tDelta = (cappedDt / travelTimeMs) * this.speed;
 
         // 1. Move particles and process arrivals
         const arriving: RequestParticle[] = [];
@@ -199,7 +210,7 @@ export class SimulationRunner {
         }
 
         // 3. Update RPS EMA (Exponential Moving Average) based on simulated time
-        this.rpsAccumulator += dt * this.speed;
+        this.rpsAccumulator += cappedDt * this.speed;
 
         if (this.rpsAccumulator >= 500) { // Every 500ms of simulated time
             for (const node of this.nodes) {
@@ -234,7 +245,7 @@ export class SimulationRunner {
             const requestsPerParticle = loadRps / visualParticlesPerSec; // batch size per dot
 
             let acc = this.clientAccumulators.get(node.id) ?? 0;
-            acc += (dt / 1000) * visualParticlesPerSec * this.speed;
+            acc += (cappedDt / 1000) * visualParticlesPerSec * this.speed;
 
             while (acc >= 1) {
                 acc -= 1;
@@ -249,9 +260,9 @@ export class SimulationRunner {
             this.clientAccumulators.set(node.id, acc);
         }
 
-        // 3. Tick logic for static metrics only
+        // Tick logic for static metrics only
         const tickInterval = 500 / this.speed;
-        this.accumulator += dt;
+        this.accumulator += cappedDt;
 
         while (this.accumulator >= tickInterval) {
             this.accumulator -= tickInterval;
@@ -264,7 +275,13 @@ export class SimulationRunner {
             this.computeLiveMetrics(),
             this.tick,
         );
+    }
 
+    private loop = (now: number) => {
+        if (!this.running) return;
+        const dt = Math.min(now - this.lastFrameTime, 100);
+        this.lastFrameTime = now;
+        this.step(dt);
         this.rafId = requestAnimationFrame(this.loop);
     };
 

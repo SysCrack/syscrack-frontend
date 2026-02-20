@@ -26,6 +26,7 @@ function NodeConfig({ node }: { node: CanvasNode }) {
     const updateName = useCanvasStore((s) => s.updateNodeName);
     const updateShared = useCanvasStore((s) => s.updateNodeSharedConfig);
     const updateSpecific = useCanvasStore((s) => s.updateNodeSpecificConfig);
+    const removeNode = useCanvasStore((s) => s.removeNode);
 
     if (!catalog) return null;
 
@@ -138,6 +139,27 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                     return null;
                 })}
             </Section>
+
+            {/* Remove component */}
+            <div style={{ padding: 12, marginTop: 'auto', borderTop: '1px solid #2a3244' }}>
+                <button
+                    type="button"
+                    onClick={() => removeNode(node.id)}
+                    style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: '#f87171',
+                        background: 'rgba(248, 113, 113, 0.12)',
+                        border: '1px solid rgba(248, 113, 113, 0.4)',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                    }}
+                >
+                    Remove component
+                </button>
+            </div>
         </div>
     );
 }

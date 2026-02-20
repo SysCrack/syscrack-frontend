@@ -1,13 +1,14 @@
 /**
  * canvasSimulationStore — Zustand store for the live canvas simulation.
  *
- * Holds the SimulationRunner instance, particle state (updated every frame),
- * live metrics, and control actions (play/pause/speed/load).
+ * Runs the tick loop in a Web Worker; particle state and live metrics
+ * are updated via worker messages. Static engine run stays on main thread.
  */
 import { create } from 'zustand';
 import type { SimulationOutput, SimulationDiagnostic, ScenarioResult, NodeSimSummary } from '@/lib/simulation/types';
 import { SimulationEngine } from '@/lib/simulation/SimulationEngine';
-import { SimulationRunner, type RequestParticle, type LiveMetrics } from '@/lib/simulation/SimulationRunner';
+import type { RequestParticle, LiveMetrics } from '@/lib/simulation/SimulationRunner';
+import type { WorkerTickMessage } from '@/lib/simulation/simulation.worker';
 import { useCanvasStore } from './canvasStore';
 
 export type CanvasSimStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error';
@@ -26,8 +27,8 @@ interface CanvasSimulationStore {
     loadFactor: number;
     tick: number;
 
-    // Runner ref (not serializable, kept outside store)
-    _runner: SimulationRunner | null;
+    // Web Worker (live simulation runs off main thread)
+    _worker: Worker | null;
 
     // Actions
     runSimulation: () => void;
@@ -50,7 +51,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
     speed: 1,
     loadFactor: 1,
     tick: 0,
-    _runner: null,
+    _worker: null,
 
     runSimulation: () => {
         const { nodes, connections } = useCanvasStore.getState();
@@ -60,52 +61,66 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             return;
         }
 
-        // Clean up previous runner
-        get()._runner?.reset();
+        // Terminate previous worker if any
+        const prev = get()._worker;
+        if (prev) prev.terminate();
 
-        // Also run the static engine for the results panel
+        // Static engine run on main thread for results panel
         const engine = new SimulationEngine(nodes, connections);
         const output = engine.run(60);
 
-        // Create live runner
-        const runner = new SimulationRunner(nodes, connections, (particles, metrics, tick) => {
-            set({ particles, liveMetrics: metrics, tick });
-        });
+        const speed = get().speed;
+        const loadFactor = get().loadFactor;
 
-        runner.speed = get().speed;
-        runner.loadFactor = get().loadFactor;
+        let worker: Worker;
+        try {
+            worker = new Worker(
+                new URL('../lib/simulation/simulation.worker.ts', import.meta.url),
+                { type: 'module' },
+            );
+        } catch {
+            set({ error: 'Web Worker not supported', status: 'error' });
+            return;
+        }
+
+        worker.onmessage = (e: MessageEvent<WorkerTickMessage>) => {
+            if (e.data.type === 'tick') {
+                set({ particles: e.data.particles, liveMetrics: e.data.metrics, tick: e.data.tick });
+            }
+        };
+
+        worker.postMessage({ type: 'init', nodes, connections, speed, loadFactor });
+        worker.postMessage({ type: 'start' });
 
         set({
             status: 'running',
             output,
             selectedScenario: 0,
             error: null,
-            _runner: runner,
+            _worker: worker,
             particles: [],
             liveMetrics: null,
             tick: 0,
         });
-
-        runner.start();
     },
 
     pauseSimulation: () => {
-        get()._runner?.pause();
+        get()._worker?.postMessage({ type: 'pause' });
         set({ status: 'paused' });
     },
 
     resumeSimulation: () => {
-        const runner = get()._runner;
-        if (runner) {
-            runner.speed = get().speed;
-            runner.loadFactor = get().loadFactor;
-            runner.start();
+        const w = get()._worker;
+        if (w) {
+            w.postMessage({ type: 'setSpeed', value: get().speed });
+            w.postMessage({ type: 'setLoadFactor', value: get().loadFactor });
+            w.postMessage({ type: 'start' });
             set({ status: 'running' });
         }
     },
 
     reset: () => {
-        get()._runner?.reset();
+        get()._worker?.terminate();
         set({
             status: 'idle',
             output: null,
@@ -114,7 +129,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             particles: [],
             liveMetrics: null,
             tick: 0,
-            _runner: null,
+            _worker: null,
         });
     },
 
@@ -123,22 +138,20 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
     },
 
     setSpeed: (s) => {
-        const runner = get()._runner;
-        if (runner) runner.setSpeed(s);
+        get()._worker?.postMessage({ type: 'setSpeed', value: s });
         set({ speed: s });
     },
 
     setLoadFactor: (f) => {
-        const runner = get()._runner;
-        if (runner) runner.setLoadFactor(f);
+        get()._worker?.postMessage({ type: 'setLoadFactor', value: f });
         set({ loadFactor: f });
     },
 
     updateRunningSimulationNodes: () => {
-        const runner = get()._runner;
-        if (runner && (get().status === 'running' || get().status === 'paused')) {
+        const w = get()._worker;
+        if (w && (get().status === 'running' || get().status === 'paused')) {
             const { nodes } = useCanvasStore.getState();
-            runner.updateNodes(nodes);
+            w.postMessage({ type: 'updateNodes', nodes });
         }
     },
 }));

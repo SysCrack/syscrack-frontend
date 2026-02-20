@@ -28,6 +28,59 @@ const ComponentPalette = dynamic(
     { ssr: false },
 );
 
+function SandboxTitleBar() {
+    const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
+    const selectedConnectionId = useCanvasStore((s) => s.selectedConnectionId);
+    const deleteSelected = useCanvasStore((s) => s.deleteSelected);
+    const hasSelection = selectedNodeIds.length > 0 || selectedConnectionId !== null;
+
+    return (
+        <div
+            style={{
+                position: 'absolute',
+                top: 12,
+                left: 12,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: 'rgba(18, 24, 38, 0.85)',
+                border: '1px solid #2a3244',
+                borderRadius: 8,
+                padding: '6px 14px',
+                backdropFilter: 'blur(8px)',
+                pointerEvents: 'auto',
+            }}
+        >
+            <span style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0', fontFamily: 'Inter, system-ui, sans-serif' }}>
+                🧪 Sandbox
+            </span>
+            <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'Inter, system-ui, sans-serif' }}>
+                Drag components • Click ports to connect • Configure
+            </span>
+            {hasSelection && (
+                <button
+                    type="button"
+                    onClick={deleteSelected}
+                    title="Delete selected (Del)"
+                    style={{
+                        marginLeft: 8,
+                        padding: '4px 10px',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: '#f87171',
+                        background: 'rgba(248, 113, 113, 0.15)',
+                        border: '1px solid rgba(248, 113, 113, 0.4)',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                    }}
+                >
+                    Delete
+                </button>
+            )}
+        </div>
+    );
+}
+
 /**
  * Right panel logic:
  * - If simulation completed → show SimulationResults
@@ -62,30 +115,8 @@ export default function SandboxPage() {
             <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
                 <SystemCanvas />
 
-                {/* Top-left: title */}
-                <div
-                    style={{
-                        position: 'absolute',
-                        top: 12,
-                        left: 12,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        background: 'rgba(18, 24, 38, 0.85)',
-                        border: '1px solid #2a3244',
-                        borderRadius: 8,
-                        padding: '6px 14px',
-                        backdropFilter: 'blur(8px)',
-                        pointerEvents: 'none',
-                    }}
-                >
-                    <span style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0', fontFamily: 'Inter, system-ui, sans-serif' }}>
-                        🧪 Sandbox
-                    </span>
-                    <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'Inter, system-ui, sans-serif' }}>
-                        Drag components • Click ports to connect • Configure
-                    </span>
-                </div>
+                {/* Top-left: title + delete when selection */}
+                <SandboxTitleBar />
 
                 {/* Top-right: simulation controls + metrics */}
                 <div
