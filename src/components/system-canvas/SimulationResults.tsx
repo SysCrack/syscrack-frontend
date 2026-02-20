@@ -4,7 +4,10 @@
  */
 'use client';
 
+import { useMemo } from 'react';
 import { useCanvasSimulationStore, useCurrentResult } from '@/stores/canvasSimulationStore';
+import { useCanvasStore } from '@/stores/canvasStore';
+import type { SimulationDiagnostic } from '@/lib/simulation/types';
 
 const font = 'Inter, system-ui, sans-serif';
 
@@ -12,12 +15,37 @@ export default function SimulationResults() {
     const status = useCanvasSimulationStore((s) => s.status);
     const output = useCanvasSimulationStore((s) => s.output);
     const result = useCurrentResult();
+    const { nodes, connections } = useCanvasStore();
 
     if (status === 'idle' || status === 'error' || !output || !result) return null;
 
+    // Recalculate SPOF diagnostics from CURRENT node state (not just stored output)
+    // This ensures diagnostics update immediately when instances are changed
+    const currentSpofDiagnostics = useMemo<SimulationDiagnostic[]>(() => {
+        const spofs: SimulationDiagnostic[] = [];
+        for (const node of nodes) {
+            if (node.type === 'client') continue;
+            const instances = node.sharedConfig.scaling?.instances ?? 1;
+            const hasSuccessors = connections.some((c) => c.sourceId === node.id);
+            const hasPredecessors = connections.some((c) => c.targetId === node.id);
+            
+            if (instances <= 1 && (hasSuccessors || hasPredecessors)) {
+                spofs.push({
+                    componentId: node.id,
+                    componentName: node.name,
+                    severity: 'warning',
+                    eventType: 'spof',
+                    message: `⚠ ${node.name} is a single point of failure (1 instance)`,
+                    suggestion: 'Increase instances or enable auto-scaling for redundancy',
+                });
+            }
+        }
+        return spofs;
+    }, [nodes, connections]);
+
     const allDiagnostics = [
         ...result.diagnostics,            // per-scenario (overloaded, high_utilization)
-        ...output.spofDiagnostics,        // structural (SPOF)
+        ...currentSpofDiagnostics,        // structural (SPOF) - recalculated from current state
     ];
 
     return (

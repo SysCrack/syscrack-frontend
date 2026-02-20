@@ -8,7 +8,7 @@
 'use client';
 
 import { Stage, Layer, Line } from 'react-konva';
-import { useRef, useCallback, useEffect, useState } from 'react';
+import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import type Konva from 'konva';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useCanvasSimulationStore, useCurrentResult } from '@/stores/canvasSimulationStore';
@@ -54,9 +54,23 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     const nodeMetrics = (simStatus === 'running' || simStatus === 'paused')
         ? (liveMetrics?.nodeMetrics ?? {})
         : (currentResult?.nodeMetrics ?? {});
-    const spofSet = new Set(
-        (simOutput?.spofDiagnostics ?? []).map((d) => d.componentId),
-    );
+    
+    // Calculate SPOF set from CURRENT node state (not just stored diagnostics)
+    // This ensures SPOF badges update immediately when instances are changed
+    const spofSet = useMemo(() => {
+        const spofs = new Set<string>();
+        for (const node of nodes) {
+            if (node.type === 'client') continue;
+            const instances = node.sharedConfig.scaling?.instances ?? 1;
+            const hasSuccessors = connections.some((c) => c.sourceId === node.id);
+            const hasPredecessors = connections.some((c) => c.targetId === node.id);
+            
+            if (instances <= 1 && (hasSuccessors || hasPredecessors)) {
+                spofs.add(node.id);
+            }
+        }
+        return spofs;
+    }, [nodes, connections]);
 
     // Diagnostics dialog state
     const [openDiagnostic, setOpenDiagnostic] = useState<{ nodeId: string; diagnostic: SimulationDiagnostic } | null>(null);

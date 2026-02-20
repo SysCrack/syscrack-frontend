@@ -37,6 +37,7 @@ interface CanvasSimulationStore {
     selectScenario: (idx: number) => void;
     setSpeed: (s: number) => void;
     setLoadFactor: (f: number) => void;
+    updateRunningSimulationNodes: () => void;
 }
 
 export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get) => ({
@@ -131,6 +132,14 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
         const runner = get()._runner;
         if (runner) runner.setLoadFactor(f);
         set({ loadFactor: f });
+    },
+
+    updateRunningSimulationNodes: () => {
+        const runner = get()._runner;
+        if (runner && (get().status === 'running' || get().status === 'paused')) {
+            const { nodes } = useCanvasStore.getState();
+            runner.updateNodes(nodes);
+        }
     },
 }));
 

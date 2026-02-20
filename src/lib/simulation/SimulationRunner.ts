@@ -90,6 +90,15 @@ export class SimulationRunner {
         this.buildGraph();
     }
 
+    /** Update node configurations dynamically (e.g., when instances are changed during simulation) */
+    updateNodes(nodes: CanvasNode[]) {
+        this.nodes = nodes;
+        // Rebuild node map with updated configs
+        for (const node of nodes) {
+            this.nodeMap.set(node.id, node);
+        }
+    }
+
     private buildGraph() {
         for (const node of this.nodes) {
             this.nodeMap.set(node.id, node);

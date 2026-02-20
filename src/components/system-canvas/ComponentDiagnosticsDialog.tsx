@@ -29,6 +29,7 @@ export default function ComponentDiagnosticsDialog({
 }: ComponentDiagnosticsDialogProps) {
     const updateNodeSharedConfig = useCanvasStore((s) => s.updateNodeSharedConfig);
     const updateNodeSpecificConfig = useCanvasStore((s) => s.updateNodeSpecificConfig);
+    const simulationStore = useCanvasSimulationStore();
 
     const handleFix = useCallback(() => {
         if (diagnostic.eventType === 'spof') {
@@ -40,6 +41,9 @@ export default function ComponentDiagnosticsDialog({
                     instances: Math.max(2, currentInstances + 1),
                 },
             });
+            
+            // Update running simulation with new node configs
+            simulationStore.updateRunningSimulationNodes();
         } else if (diagnostic.eventType === 'overloaded' || diagnostic.eventType === 'high_utilization') {
             // Overload fix: Increase instances or capacity
             const currentInstances = node.sharedConfig.scaling?.instances ?? 1;
@@ -57,10 +61,13 @@ export default function ComponentDiagnosticsDialog({
                     },
                 });
             }
+            
+            // Update running simulation with new node configs
+            simulationStore.updateRunningSimulationNodes();
         }
 
         onClose();
-    }, [diagnostic, node, updateNodeSharedConfig, updateNodeSpecificConfig, onClose]);
+    }, [diagnostic, node, updateNodeSharedConfig, updateNodeSpecificConfig, simulationStore, onClose]);
 
     if (!isOpen) return null;
 
