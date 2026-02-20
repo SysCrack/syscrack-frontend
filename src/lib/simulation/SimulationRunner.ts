@@ -230,6 +230,12 @@ export class SimulationRunner {
             while (acc >= 1) {
                 acc -= 1;
                 this.spawnFromNode(node.id, requestsPerParticle);
+
+                // Track for client RPS metric
+                this.nodeRecentArrivals.set(
+                    node.id,
+                    (this.nodeRecentArrivals.get(node.id) ?? 0) + requestsPerParticle,
+                );
             }
             this.clientAccumulators.set(node.id, acc);
         }
