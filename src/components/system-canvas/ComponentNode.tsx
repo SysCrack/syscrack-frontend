@@ -48,6 +48,8 @@ interface ComponentNodeProps {
     // Simulation overlay data (undefined = no simulation active)
     simState?: NodeSimSummary;
     isSpof?: boolean;
+    // Diagnostic click handler (opens diagnostics dialog)
+    onDiagnosticClick?: () => void;
 }
 
 // ============ Component ============
@@ -61,6 +63,7 @@ export default function ComponentNode({
     isConnecting,
     simState,
     isSpof,
+    onDiagnosticClick,
 }: ComponentNodeProps) {
     const groupRef = useRef<Konva.Group>(null);
     const [isHovered, setIsHovered] = useState(false);
@@ -262,9 +265,15 @@ export default function ComponentNode({
 
             {/* ── Simulation Overlays ── */}
 
-            {/* SPOF badge — top-right */}
+            {/* SPOF badge — top-right (clickable if diagnostic available) */}
             {isSpof && (
-                <Group x={width - 42} y={-8}>
+                <Group 
+                    x={width - 42} 
+                    y={-8}
+                    onClick={onDiagnosticClick}
+                    onTap={onDiagnosticClick}
+                    style={{ cursor: onDiagnosticClick ? 'pointer' : 'default' }}
+                >
                     <Rect
                         width={42}
                         height={16}

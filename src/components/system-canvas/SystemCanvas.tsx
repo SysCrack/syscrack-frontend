@@ -14,7 +14,9 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { useCanvasSimulationStore, useCurrentResult } from '@/stores/canvasSimulationStore';
 import ComponentNode from './ComponentNode';
 import Connection from './Connection';
+import ComponentDiagnosticsDialog from './ComponentDiagnosticsDialog';
 import type { CanvasComponentType } from '@/lib/types/canvas';
+import type { SimulationDiagnostic } from '@/lib/simulation/types';
 
 // ============ Props ============
 
@@ -56,6 +58,36 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         (simOutput?.spofDiagnostics ?? []).map((d) => d.componentId),
     );
 
+    // Diagnostics dialog state
+    const [openDiagnostic, setOpenDiagnostic] = useState<{ nodeId: string; diagnostic: SimulationDiagnostic } | null>(null);
+    
+    // Connection tooltip state
+    const [hoveredConnectionId, setHoveredConnectionId] = useState<string | null>(null);
+    
+    // Map diagnostics by component ID (SPOF + per-scenario)
+    const diagnosticsByNodeId = new Map<string, SimulationDiagnostic>();
+    (simOutput?.spofDiagnostics ?? []).forEach((d) => diagnosticsByNodeId.set(d.componentId, d));
+    (currentResult?.diagnostics ?? []).forEach((d) => {
+        // Per-scenario diagnostics override SPOF if they exist
+        if (!diagnosticsByNodeId.has(d.componentId) || d.severity === 'critical') {
+            diagnosticsByNodeId.set(d.componentId, d);
+        }
+    });
+
+    const handleDiagnosticClick = useCallback((nodeId: string) => {
+        const diagnostic = diagnosticsByNodeId.get(nodeId);
+        if (diagnostic) {
+            setOpenDiagnostic({ nodeId, diagnostic });
+        }
+    }, [diagnosticsByNodeId]);
+
+    const handleConnectionHover = useCallback((connectionId: string | null) => {
+        setHoveredConnectionId(connectionId);
+    }, []);
+
+    // Node lookup for connections (needed for tooltip calculation)
+    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+
     // Group particles by connection ID for efficient lookup
     const particlesByConnection = new Map<string, typeof particles>();
     for (const p of particles) {
@@ -63,6 +95,47 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         if (arr) arr.push(p);
         else particlesByConnection.set(p.connectionId, [p]);
     }
+
+    // Calculate tooltip content for hovered connection
+    const tooltipContent = hoveredConnectionId && simActive ? (() => {
+        const conn = connections.find((c) => c.id === hoveredConnectionId);
+        if (!conn) return null;
+        const targetMetrics = nodeMetrics[conn.targetId];
+        if (!targetMetrics) return null;
+
+        const utilization = targetMetrics.avgCpuPercent;
+        const isWarning = utilization > 70;
+        const isCritical = utilization > 90 || !targetMetrics.isHealthy;
+        
+        if (!isWarning && !isCritical) return null;
+
+        const targetNode = nodeMap.get(conn.targetId);
+        const sourceNode = nodeMap.get(conn.sourceId);
+        if (!targetNode || !sourceNode) return null;
+
+        // Calculate midpoint in canvas coordinates
+        const sc = { x: sourceNode.x + sourceNode.width / 2, y: sourceNode.y + sourceNode.height / 2 };
+        const tc = { x: targetNode.x + targetNode.width / 2, y: targetNode.y + targetNode.height / 2 };
+        const midX = (sc.x + tc.x) / 2;
+        const midY = (sc.y + tc.y) / 2;
+
+        // Transform to screen coordinates
+        const stage = stageRef.current;
+        if (!stage) return null;
+        const stageBox = stage.container().getBoundingClientRect();
+        const screenX = stageBox.left + (midX * viewport.scale + viewport.x);
+        const screenY = stageBox.top + (midY * viewport.scale + viewport.y);
+
+        const cause = isCritical 
+            ? `Load ${utilization.toFixed(0)}% (critical > 90%)`
+            : `Load ${utilization.toFixed(0)}% (warn > 70%)`;
+        
+        const fix = isCritical
+            ? 'Increase max instances or per-node capacity; add a cache or queue to smooth spikes'
+            : 'Increase max instances or per-node capacity';
+
+        return { cause, fix, severity: isCritical ? 'critical' : 'warning', x: screenX, y: screenY };
+    })() : null;
 
     // ── Resize observer ──
     useEffect(() => {
@@ -239,9 +312,6 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         useCanvasStore.getState().selectConnection(id);
     }, []);
 
-    // Node lookup for connections
-    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
-
     // Source node for connection preview
     const connectingSourceNode = connectingFrom ? nodeMap.get(connectingFrom) : null;
 
@@ -315,6 +385,8 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                                         : undefined
                                 }
                                 particles={particlesByConnection.get(conn.id)}
+                                targetNodeMetrics={simActive ? nodeMetrics[conn.targetId] : undefined}
+                                onHover={simActive ? handleConnectionHover : undefined}
                             />
                         );
                     })}
@@ -348,10 +420,57 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                             isConnecting={!!connectingFrom}
                             simState={simActive ? nodeMetrics[node.id] : undefined}
                             isSpof={simActive ? spofSet.has(node.id) : false}
+                            onDiagnosticClick={simActive && diagnosticsByNodeId.has(node.id) ? () => handleDiagnosticClick(node.id) : undefined}
                         />
                     ))}
                 </Layer>
             </Stage>
+
+            {/* Component Diagnostics Dialog */}
+            {openDiagnostic && nodeMap.has(openDiagnostic.nodeId) && (
+                <ComponentDiagnosticsDialog
+                    diagnostic={openDiagnostic.diagnostic}
+                    node={nodeMap.get(openDiagnostic.nodeId)!}
+                    isOpen={true}
+                    onClose={() => setOpenDiagnostic(null)}
+                />
+            )}
+
+            {/* Connection Tooltip */}
+            {tooltipContent && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        left: `${tooltipContent.x}px`,
+                        top: `${tooltipContent.y}px`,
+                        transform: 'translate(-50%, -100%)',
+                        marginBottom: 8,
+                        pointerEvents: 'none',
+                        zIndex: 1000,
+                    }}
+                >
+                    <div
+                        style={{
+                            background: tooltipContent.severity === 'critical' ? '#7f1d1d' : '#78350f',
+                            border: `1px solid ${tooltipContent.severity === 'critical' ? '#ef4444' : '#f59e0b'}`,
+                            borderRadius: 6,
+                            padding: '8px 12px',
+                            fontSize: 11,
+                            fontFamily: 'Inter, system-ui, sans-serif',
+                            color: '#e2e8f0',
+                            maxWidth: 240,
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
+                        }}
+                    >
+                        <div style={{ fontWeight: 600, marginBottom: 4, color: tooltipContent.severity === 'critical' ? '#fca5a5' : '#fde68a' }}>
+                            Cause: {tooltipContent.cause}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#cbd5e1', lineHeight: 1.4 }}>
+                            💡 {tooltipContent.fix}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Connection mode indicator */}
             {connectingFrom && (

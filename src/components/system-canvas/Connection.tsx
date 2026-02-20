@@ -50,6 +50,10 @@ interface ConnectionProps {
     simHealthy?: boolean;
     // Live particles on this connection (driven by SimulationRunner)
     particles?: RequestParticle[];
+    // Node metrics for tooltip (target node utilization)
+    targetNodeMetrics?: { avgCpuPercent: number; avgLatencyMs: number; avgErrorRate: number; isHealthy: boolean };
+    // Hover callbacks for tooltip
+    onHover?: (connectionId: string | null) => void;
 }
 
 // ============ Helpers ============
@@ -104,6 +108,8 @@ export default function Connection({
     simActive,
     simHealthy,
     particles,
+    targetNodeMetrics,
+    onHover,
 }: ConnectionProps) {
     const [isHovered, setIsHovered] = useState(false);
     const baseColor = PROTOCOL_COLORS[connection.protocol] || PROTOCOL_COLORS.custom;
@@ -162,8 +168,14 @@ export default function Connection({
                 strokeWidth={16}
                 onClick={handleClick}
                 onTap={handleTap}
-                onMouseEnter={() => setIsHovered(true)}
-                onMouseLeave={() => setIsHovered(false)}
+                onMouseEnter={() => {
+                    setIsHovered(true);
+                    onHover?.(connection.id);
+                }}
+                onMouseLeave={() => {
+                    setIsHovered(false);
+                    onHover?.(null);
+                }}
             />
 
             {/* Visible line */}

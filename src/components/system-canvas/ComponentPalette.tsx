@@ -6,14 +6,14 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { COMPONENT_CATALOG, CATEGORIES, getCatalogByCategory } from '@/lib/data/componentCatalog';
-import type { ComponentCatalogEntry } from '@/lib/types/canvas';
+import type { ComponentCatalogEntry, ComponentCategory } from '@/lib/types/canvas';
 
 interface ComponentPaletteProps {
     className?: string;
 }
 
 export default function ComponentPalette({ className }: ComponentPaletteProps) {
-    const [activeTab, setActiveTab] = useState<string>('traffic');
+    const [activeTab, setActiveTab] = useState<ComponentCategory>('traffic');
     const [searchQuery, setSearchQuery] = useState('');
 
     // Only show thoroughly tested components in sandbox
@@ -21,13 +21,13 @@ export default function ComponentPalette({ className }: ComponentPaletteProps) {
     const testedCatalog = COMPONENT_CATALOG.filter((c) => TESTED_COMPONENTS.includes(c.type as any));
     
     // Only show category tabs that have tested components
-    const testedCategories = new Set(testedCatalog.map((c) => c.category));
-    const visibleCategories = CATEGORIES.filter((cat) => testedCategories.has(cat.id));
+    const testedCategories = new Set<ComponentCategory>(testedCatalog.map((c) => c.category));
+    const visibleCategories = CATEGORIES.filter((cat) => testedCategories.has(cat.id as ComponentCategory));
 
     // Ensure activeTab is valid (has tested components)
     useEffect(() => {
         if (!testedCategories.has(activeTab) && visibleCategories.length > 0) {
-            setActiveTab(visibleCategories[0].id);
+            setActiveTab(visibleCategories[0].id as ComponentCategory);
         }
     }, [activeTab, testedCategories, visibleCategories]);
 
