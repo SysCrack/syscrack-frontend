@@ -11,6 +11,7 @@
  */
 'use client';
 
+import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import ConfigSidebar from '@/components/system-canvas/ConfigSidebar';
 import LiveComponentInspector from '@/components/system-canvas/LiveComponentInspector';
@@ -85,26 +86,34 @@ function SandboxTitleBar() {
 
 /**
  * Right panel logic:
- * - If lastTrace set (step-through debug) → RequestTracePanel
- * - If simulation active AND one node selected → LiveComponentInspector
- * - If simulation active AND no node selected → SimulationResults
+ * - If simulation active AND one node selected → LiveComponentInspector (metrics win over traces)
+ * - If traceHistory has traces (step-through debug) → RequestTracePanel (collapsible)
+ * - If simulation active → SimulationResults (collapsible)
  * - If simulation idle AND one node selected → ConfigSidebar
  * - Else → nothing
  */
-function RightPanel() {
+function RightPanel({
+    collapsed,
+    onToggle,
+}: {
+    collapsed?: boolean;
+    onToggle?: () => void;
+}) {
     const simStatus = useCanvasSimulationStore((s) => s.status);
-    const lastTrace = useCanvasSimulationStore((s) => s.lastTrace);
+    const traceHistory = useCanvasSimulationStore((s) => s.traceHistory);
     const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
     const simActive = simStatus === 'running' || simStatus === 'paused' || simStatus === 'completed';
 
-    if (lastTrace) return <RequestTracePanel />;
     if (simActive && selectedNodeIds.length === 1) return <LiveComponentInspector nodeId={selectedNodeIds[0]} />;
-    if (simActive) return <SimulationResults />;
+    if (traceHistory.length > 0) return <RequestTracePanel collapsed={collapsed} onToggle={onToggle} />;
+    if (simActive) return <SimulationResults collapsed={collapsed} onToggle={onToggle} />;
     if (selectedNodeIds.length === 1) return <ConfigSidebar />;
     return null;
 }
 
 export default function SandboxPage() {
+    const [paletteCollapsed, setPaletteCollapsed] = useState(false);
+    const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
     return (
         <div
             style={{
@@ -116,7 +125,10 @@ export default function SandboxPage() {
         >
             {/* Left — Component Palette */}
             <div style={{ flexShrink: 0 }}>
-                <ComponentPalette />
+                <ComponentPalette
+                    collapsed={paletteCollapsed}
+                    onToggle={() => setPaletteCollapsed((v) => !v)}
+                />
             </div>
 
             {/* Center — Canvas */}
@@ -140,7 +152,10 @@ export default function SandboxPage() {
             </div>
 
             {/* Right — Config or Results panel */}
-            <RightPanel />
+            <RightPanel
+                collapsed={rightPanelCollapsed}
+                onToggle={() => setRightPanelCollapsed((v) => !v)}
+            />
         </div>
     );
 }

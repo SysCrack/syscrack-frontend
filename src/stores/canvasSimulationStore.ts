@@ -31,8 +31,8 @@ interface CanvasSimulationStore {
     _worker: Worker | null;
     _paused: boolean;
 
-    // Step-through debug
-    lastTrace: RequestTrace | null;
+    // Step-through debug: all traces (most recent last)
+    traceHistory: RequestTrace[];
 
     // Actions
     runSimulation: () => void;
@@ -60,7 +60,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
     tick: 0,
     _worker: null,
     _paused: false,
-    lastTrace: null,
+    traceHistory: [],
 
     runSimulation: () => {
         const { nodes, connections } = useCanvasStore.getState();
@@ -95,10 +95,12 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
         worker.onmessage = (e: MessageEvent<WorkerTickMessage | { type: 'trace'; trace: RequestTrace }>) => {
             const d = e.data;
             if (d.type === 'tick') {
-                // Accept ticks when running; when paused, ticks come from step (we want those too)
+                // When paused, only accept ticks from explicit Step (fromStep); ignore stray interval ticks
+                const status = get().status;
+                if (status === 'paused' && !d.fromStep) return;
                 set({ particles: d.particles, liveMetrics: d.metrics, tick: d.tick });
             } else if (d.type === 'trace') {
-                set({ lastTrace: d.trace });
+                set((s) => ({ traceHistory: [...s.traceHistory, d.trace] }));
             }
         };
 
@@ -115,7 +117,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             liveMetrics: null,
             tick: 0,
             _paused: false,
-            lastTrace: null,
+            traceHistory: [],
         });
     },
 
@@ -147,9 +149,11 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
         worker.onmessage = (e: MessageEvent<WorkerTickMessage | { type: 'trace'; trace: RequestTrace }>) => {
             const d = e.data;
             if (d.type === 'tick') {
+                const status = get().status;
+                if (status === 'paused' && !d.fromStep) return;
                 set({ particles: d.particles, liveMetrics: d.metrics, tick: d.tick });
             } else if (d.type === 'trace') {
-                set({ lastTrace: d.trace });
+                set((s) => ({ traceHistory: [...s.traceHistory, d.trace] }));
             }
         };
 
@@ -166,7 +170,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             liveMetrics: null,
             tick: 0,
             _paused: true,
-            lastTrace: null,
+            traceHistory: [],
         });
     },
 
@@ -208,7 +212,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             tick: 0,
             _worker: null,
             _paused: false,
-            lastTrace: null,
+            traceHistory: [],
         });
     },
 

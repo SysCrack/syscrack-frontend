@@ -126,7 +126,7 @@ function LoadBalancerDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'lo
                 {d.backends.map((b) => (
                     <div key={b.nodeId} style={{ padding: '6px 0', borderBottom: '1px solid #2a3244' }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0' }}>{b.name}</div>
-                        <Row label="Sent requests" value={b.sentRequests} />
+                        <Row label="Sent requests" value={Math.round(b.sentRequests)} />
                         <Row label="Active connections" value={b.activeConnections} />
                     </div>
                 ))}

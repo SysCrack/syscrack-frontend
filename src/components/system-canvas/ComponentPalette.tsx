@@ -10,9 +10,11 @@ import type { ComponentCatalogEntry, ComponentCategory } from '@/lib/types/canva
 
 interface ComponentPaletteProps {
     className?: string;
+    collapsed?: boolean;
+    onToggle?: () => void;
 }
 
-export default function ComponentPalette({ className }: ComponentPaletteProps) {
+export default function ComponentPalette({ className, collapsed = false, onToggle }: ComponentPaletteProps) {
     const [activeTab, setActiveTab] = useState<ComponentCategory>('traffic');
     const [searchQuery, setSearchQuery] = useState('');
 
@@ -40,29 +42,73 @@ export default function ComponentPalette({ className }: ComponentPaletteProps) {
         <div
             className={className}
             style={{
-                width: 220,
+                width: collapsed ? 36 : 220,
                 height: '100%',
                 background: '#181e2e',
                 borderRight: '1px solid #2a3244',
                 display: 'flex',
                 flexDirection: 'column',
                 fontFamily: 'Inter, system-ui, sans-serif',
+                transition: 'width 0.2s ease',
             }}
         >
-            {/* Header */}
-            <div style={{ padding: '12px 12px 8px', borderBottom: '1px solid #2a3244' }}>
-                <h3
+            {collapsed ? (
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    title="Expand palette"
                     style={{
-                        margin: 0,
-                        fontSize: 11,
-                        fontWeight: 600,
+                        width: '100%',
+                        height: '100%',
+                        minHeight: 120,
+                        padding: 8,
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
                         color: '#64748b',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.08em',
+                        fontSize: 14,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
                     }}
                 >
-                    Components
-                </h3>
+                    ▶
+                </button>
+            ) : (
+                <>
+            {/* Header */}
+            <div style={{ padding: '12px 12px 8px', borderBottom: '1px solid #2a3244' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <h3
+                        style={{
+                            margin: 0,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: '#64748b',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.08em',
+                        }}
+                    >
+                        Components
+                    </h3>
+                    {onToggle && (
+                        <button
+                            type="button"
+                            onClick={onToggle}
+                            title="Collapse palette"
+                            style={{
+                                background: 'transparent',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: '#64748b',
+                                fontSize: 12,
+                                padding: '2px 4px',
+                            }}
+                        >
+                            ◀
+                        </button>
+                    )}
+                </div>
                 <input
                     type="text"
                     placeholder="Search..."
@@ -136,6 +182,8 @@ export default function ComponentPalette({ className }: ComponentPaletteProps) {
                     </div>
                 )}
             </div>
+                </>
+            )}
         </div>
     );
 }

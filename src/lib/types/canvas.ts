@@ -105,6 +105,8 @@ export interface LoadBalancerSpecificConfig {
     algorithm: 'round-robin' | 'least-connections' | 'ip-hash' | 'weighted';
     healthCheckInterval: number;
     stickySessions: boolean;
+    /** When algorithm is 'weighted', weight per backend node ID. */
+    backendWeights?: Record<string, number>;
 }
 
 export interface APIGatewaySpecificConfig {

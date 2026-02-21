@@ -25,6 +25,7 @@ export type WorkerTickMessage = {
     particles: RequestParticle[];
     metrics: LiveMetrics;
     tick: number;
+    fromStep?: boolean;
 };
 
 export type WorkerTraceMessage = {
@@ -38,6 +39,7 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 let lastTime = 0;
 let loopActive = false;
 let paused = false;
+let stepInProgress = false;
 const TARGET_MS = 1000 / 60; // ~60fps
 
 function stopLoop() {
@@ -71,7 +73,7 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
                 msg.nodes,
                 msg.connections,
                 (particles, metrics, tick) => {
-                    const out: WorkerTickMessage = { type: 'tick', particles, metrics, tick };
+                    const out: WorkerTickMessage = { type: 'tick', particles, metrics, tick, fromStep: stepInProgress };
                     self.postMessage(out);
                 },
                 {
@@ -113,17 +115,21 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
         }
         case 'step': {
             if (runner) {
+                stepInProgress = true;
                 runner.stepUntilNextArrival();
+                stepInProgress = false;
             }
             break;
         }
         case 'injectRequest': {
             if (runner) {
+                stepInProgress = true;
                 const client = lastNodes.find((n) => n.type === 'client');
                 if (client) {
                     runner.injectSingleRequest(client.id);
                     runner.stepOnce(1, true);
                 }
+                stepInProgress = false;
             }
             break;
         }

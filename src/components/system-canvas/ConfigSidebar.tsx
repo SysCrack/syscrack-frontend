@@ -35,6 +35,8 @@ export default function ConfigSidebar() {
 
 function NodeConfig({ node }: { node: CanvasNode }) {
     const catalog = getCatalogEntry(node.type);
+    const nodes = useCanvasStore((s) => s.nodes);
+    const connections = useCanvasStore((s) => s.connections);
     const updateName = useCanvasStore((s) => s.updateNodeName);
     const updateShared = useCanvasStore((s) => s.updateNodeSharedConfig);
     const updateSpecific = useCanvasStore((s) => s.updateNodeSpecificConfig);
@@ -142,6 +144,37 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                 </Section>
             )}
 
+            {/* Load Balancer: backend weights when algorithm is weighted */}
+            {node.type === 'load_balancer' && (node.specificConfig as { algorithm?: string }).algorithm === 'weighted' && (() => {
+                const lbConfig = node.specificConfig as { backendWeights?: Record<string, number> };
+                const backendConns = connections.filter((c) => c.sourceId === node.id);
+                const weights = lbConfig.backendWeights ?? {};
+                return (
+                    <Section key="lb-weights" title="Backend Weights">
+                        {backendConns.length === 0 ? (
+                            <div style={{ fontSize: 11, color: '#64748b' }}>Connect to backends first</div>
+                        ) : (
+                            backendConns.map((conn) => {
+                                const target = nodes.find((n) => n.id === conn.targetId);
+                                const w = weights[conn.targetId] ?? 1;
+                                return (
+                                    <NumberField
+                                        key={conn.targetId}
+                                        label={target?.name ?? conn.targetId}
+                                        value={w}
+                                        min={1}
+                                        max={100}
+                                        onChange={(v) => updateSpecific(node.id, {
+                                            backendWeights: { ...weights, [conn.targetId]: Math.max(1, v) },
+                                        })}
+                                    />
+                                );
+                            })
+                        )}
+                    </Section>
+                );
+            })()}
+
             {/* Component-specific config */}
             <Section title={`${catalog.label} Config`}>
                 {Object.entries(
@@ -149,6 +182,7 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                         ? { ...node.specificConfig, maxEntries: 24 }
                         : node.specificConfig
                 ).map(([key, value]) => {
+                    if (key === 'backendWeights') return null;
                     if (typeof value === 'boolean') return <Toggle key={key} label={fmtLabel(key)} value={value} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
                     if (typeof value === 'number') {
                         if (node.type === 'cache' && key === 'maxEntries') {

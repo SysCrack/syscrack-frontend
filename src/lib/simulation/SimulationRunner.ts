@@ -196,6 +196,9 @@ export class SimulationRunner {
     private cacheHits: Map<string, number> = new Map();
     private cacheMisses: Map<string, number> = new Map();
     private cacheSimulators: Map<string, CacheEntrySimulator> = new Map();
+    // Throttle downstream particles so visual density reflects hit rate
+    private cacheDownstreamAccumulator: Map<string, number> = new Map();
+    private cacheDownstreamBatchCount: Map<string, number> = new Map();
 
     // LB: requests sent per backend (nodeId -> targetId -> count)
     private lbSentRequests: Map<string, Map<string, number>> = new Map();
@@ -261,6 +264,8 @@ export class SimulationRunner {
             if (node.type === 'cache' || node.type === 'cdn') {
                 this.cacheHits.set(node.id, 0);
                 this.cacheMisses.set(node.id, 0);
+                this.cacheDownstreamAccumulator.set(node.id, 0);
+                this.cacheDownstreamBatchCount.set(node.id, 0);
                 const c = node.specificConfig as Record<string, unknown>;
                 const ev = (c.evictionPolicy as string) ?? 'lru';
                 const ttl = (c.defaultTtl as number) ?? (c.cacheTtl as number) ?? 3600;
@@ -344,6 +349,8 @@ export class SimulationRunner {
             if (node.type === 'cache' || node.type === 'cdn') {
                 this.cacheHits.set(node.id, 0);
                 this.cacheMisses.set(node.id, 0);
+                this.cacheDownstreamAccumulator.set(node.id, 0);
+                this.cacheDownstreamBatchCount.set(node.id, 0);
                 const c = node.specificConfig as Record<string, unknown>;
                 const ev = (c.evictionPolicy as string) ?? 'lru';
                 const ttl = (c.defaultTtl as number) ?? (c.cacheTtl as number) ?? 3600;
@@ -477,7 +484,8 @@ export class SimulationRunner {
 
         // Base travel time: takes 1500ms to cross a connection at 1.0x speed
         const travelTimeMs = 1500;
-        const tDelta = (cappedDt / travelTimeMs) * this.speed;
+        let tDelta = (cappedDt / travelTimeMs) * this.speed;
+        tDelta = Math.min(tDelta, 1.0); // Cap so no particle overshoots 1.0 in one frame
 
         // 1. Move particles and process arrivals
         const arriving: RequestParticle[] = [];
@@ -667,15 +675,56 @@ export class SimulationRunner {
                 break;
             }
 
-            case 'weighted':
-            default: {
-                // For traced single request: pick one backend so trace follows one path
+            case 'weighted': {
+                const bw = (node.specificConfig as Record<string, unknown>).backendWeights as Record<string, number> | undefined;
+                const totalWeight = outConns.reduce((s, c) => s + (bw?.[c.targetId] ?? 1), 0);
+                const useWeights = totalWeight > 0 && outConns.some((c) => (bw?.[c.targetId] ?? 1) > 0);
+
                 if (traceId && count === 1) {
-                    const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
-                    this.rrCounters.set(node.id, idx + 1);
-                    chosenConn = outConns[idx];
-                    this.emitParticle(chosenConn, 1, undefined, traceId);
-                    recordSent(chosenConn.targetId, 1);
+                    // Pick one backend by weight (weighted random)
+                    if (useWeights) {
+                        let r = Math.random() * totalWeight;
+                        for (const conn of outConns) {
+                            const w = bw?.[conn.targetId] ?? 1;
+                            if (r < w) {
+                                chosenConn = conn;
+                                break;
+                            }
+                            r -= w;
+                        }
+                        if (!chosenConn) chosenConn = outConns[outConns.length - 1];
+                    } else {
+                        const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
+                        this.rrCounters.set(node.id, idx + 1);
+                        chosenConn = outConns[idx];
+                    }
+                    this.emitParticle(chosenConn!, 1, undefined, traceId);
+                    recordSent(chosenConn!.targetId, 1);
+                } else if (useWeights) {
+                    // Distribute count by weight; largest remainder to fix rounding
+                    const frac = outConns.map((c) => ({
+                        conn: c,
+                        w: bw?.[c.targetId] ?? 1,
+                        base: Math.floor((count * ((bw?.[c.targetId] ?? 1) / totalWeight))),
+                        remainder: 0,
+                    }));
+                    frac.forEach((f) => {
+                        f.remainder = (count * (f.w / totalWeight)) - f.base;
+                    });
+                    let assigned = frac.reduce((s, f) => s + f.base, 0);
+                    frac.sort((a, b) => b.remainder - a.remainder);
+                    for (const f of frac) {
+                        if (assigned >= count) break;
+                        f.base += 1;
+                        assigned += 1;
+                    }
+                    chosenConn = frac[0].conn;
+                    for (const f of frac) {
+                        if (f.base > 0) {
+                            this.emitParticle(f.conn, f.base, undefined, traceId);
+                            recordSent(f.conn.targetId, f.base);
+                        }
+                    }
                 } else {
                     const perConn = Math.max(1, Math.round(count / outConns.length));
                     chosenConn = outConns[0];
@@ -683,6 +732,16 @@ export class SimulationRunner {
                         this.emitParticle(conn, perConn, undefined, traceId);
                         recordSent(conn.targetId, perConn);
                     }
+                }
+                break;
+            }
+            default: {
+                // Fallback: equal split (e.g. unknown algorithm)
+                const perConn = Math.max(1, Math.round(count / outConns.length));
+                chosenConn = outConns[0];
+                for (const conn of outConns) {
+                    this.emitParticle(conn, perConn, undefined, traceId);
+                    recordSent(conn.targetId, perConn);
                 }
                 break;
             }
@@ -719,8 +778,30 @@ export class SimulationRunner {
             }
         }
 
-        for (const conn of outConns) {
-            this.emitParticle(conn, misses, '#f59e0b', traceId);
+        if (traceId) {
+            // Traced: emit immediately so user sees the particle
+            for (const conn of outConns) {
+                this.emitParticle(conn, misses, '#f59e0b', traceId);
+            }
+            return;
+        }
+
+        // Non-traced: throttle particle emission so visual density reflects hit rate
+        const missRate = 1 - hitRate;
+        const k = Math.max(1, Math.round(1 / missRate));
+        let acc = this.cacheDownstreamAccumulator.get(node.id) ?? 0;
+        let batchCount = this.cacheDownstreamBatchCount.get(node.id) ?? 0;
+        acc += misses;
+        batchCount += 1;
+        this.cacheDownstreamAccumulator.set(node.id, acc);
+        this.cacheDownstreamBatchCount.set(node.id, batchCount);
+
+        if (batchCount >= k && acc > 0) {
+            for (const conn of outConns) {
+                this.emitParticle(conn, acc, '#f59e0b');
+            }
+            this.cacheDownstreamAccumulator.set(node.id, 0);
+            this.cacheDownstreamBatchCount.set(node.id, 0);
         }
     }
 

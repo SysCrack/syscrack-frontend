@@ -10,8 +10,14 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import type { SimulationDiagnostic } from '@/lib/simulation/types';
 
 const font = 'Inter, system-ui, sans-serif';
+const panelWidth = 280;
 
-export default function SimulationResults() {
+interface SimulationResultsProps {
+    collapsed?: boolean;
+    onToggle?: () => void;
+}
+
+export default function SimulationResults({ collapsed = false, onToggle }: SimulationResultsProps) {
     const status = useCanvasSimulationStore((s) => s.status);
     const output = useCanvasSimulationStore((s) => s.output);
     const result = useCurrentResult();
@@ -48,11 +54,51 @@ export default function SimulationResults() {
         ...currentSpofDiagnostics,        // structural (SPOF) - recalculated from current state
     ];
 
+    if (collapsed && onToggle) {
+        return (
+            <div
+                style={{
+                    width: 36,
+                    flexShrink: 0,
+                    height: '100%',
+                    background: '#181e2e',
+                    borderLeft: '1px solid #2a3244',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    fontFamily: font,
+                    transition: 'width 0.2s ease',
+                }}
+            >
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    title="Expand simulation results"
+                    style={{
+                        width: '100%',
+                        height: '100%',
+                        minHeight: 120,
+                        padding: 8,
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: '#64748b',
+                        fontSize: 14,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                    }}
+                >
+                    ◀
+                </button>
+            </div>
+        );
+    }
+
     return (
         <div
             style={{
-                width: 280,
-                minWidth: 280,
+                width: panelWidth,
+                minWidth: panelWidth,
                 flexShrink: 0,
                 height: '100%',
                 background: '#181e2e',
@@ -61,16 +107,36 @@ export default function SimulationResults() {
                 flexDirection: 'column',
                 fontFamily: font,
                 overflowY: 'auto',
+                transition: 'width 0.2s ease',
             }}
         >
             {/* Header */}
-            <div style={{ padding: '12px 14px', borderBottom: '1px solid #2a3244' }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>
-                    📊 Simulation Results
+            <div style={{ padding: '12px 14px', borderBottom: '1px solid #2a3244', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>
+                        📊 Simulation Results
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                        {result.scenario} — Score: {result.score}%
+                    </div>
                 </div>
-                <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                    {result.scenario} — Score: {result.score}%
-                </div>
+                {onToggle && (
+                    <button
+                        type="button"
+                        onClick={onToggle}
+                        title="Collapse panel"
+                        style={{
+                            background: 'transparent',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: '#64748b',
+                            fontSize: 14,
+                            padding: 4,
+                        }}
+                    >
+                        ▶
+                    </button>
+                )}
             </div>
 
             {/* Score breakdown */}
