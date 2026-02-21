@@ -514,18 +514,18 @@ export function ResultsPanel() {
     }
 
 
-    // Collapsed state
+    // Collapsed state: compact pill at bottom-center so it doesn't block the entire bottom
     if (isCollapsed) {
         return (
-            <div className="fixed bottom-0 left-0 right-0 bg-[var(--color-panel-bg)] border-t border-[var(--color-border)] shadow-2xl z-[70] transition-all duration-300">
+            <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-auto max-w-sm h-12 flex items-center bg-[var(--color-panel-bg)] border border-[var(--color-border)] rounded-full shadow-lg z-[70] transition-all duration-300">
                 <button
                     onClick={() => setIsCollapsed(false)}
-                    className="w-full px-6 py-3 flex items-center justify-between hover:bg-[var(--color-surface)] transition-colors"
+                    className="w-full h-full px-5 py-2 flex items-center justify-between gap-3 hover:bg-[var(--color-surface)] rounded-full transition-colors"
                 >
-                    <div className="flex items-center gap-4">
-                        <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Simulation Results</h2>
+                    <div className="flex items-center gap-3 min-w-0">
+                        <h2 className="text-sm font-bold text-[var(--color-text-primary)] truncate">Simulation Results</h2>
                         {totalScore !== null && (
-                            <span className={`px-3 py-1 rounded-full text-sm font-bold border ${(gradingResult?.checks.some(c => !c.passed))
+                            <span className={`flex-shrink-0 px-2.5 py-0.5 rounded-full text-xs font-bold border ${(gradingResult?.checks.some(c => !c.passed))
                                 ? 'bg-red-500/10 text-red-500 border-red-500/30'
                                 : getScoreColorClass(totalScore)
                                 }`}>
@@ -533,7 +533,7 @@ export function ResultsPanel() {
                             </span>
                         )}
                     </div>
-                    <ChevronUp className="h-5 w-5 text-[var(--color-text-tertiary)]" />
+                    <ChevronUp className="h-4 w-4 flex-shrink-0 text-[var(--color-text-tertiary)]" />
                 </button>
             </div>
         );

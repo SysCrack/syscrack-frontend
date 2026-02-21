@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Database, Layers, ArrowRight, Code2 } from "lucide-react";
+import { Database, ArrowRight, FlaskConical } from "lucide-react";
 import { TopNav } from "@/components/layout/TopNav";
 import { Footer } from "@/components/layout/Footer";
 import { useAuthStore } from "@/stores/authStore";
@@ -40,42 +40,38 @@ export function Dashboard() {
                                     SQL Optimization
                                 </h2>
                                 <p className="mb-8 text-[var(--color-text-secondary)] leading-relaxed flex-grow">
-                                    Master database performance tuning with real-world query optimization challenges. Analyze query plans and fix bottlenecks.
+                                    Master database performance tuning with real-world query optimization challenges.
                                 </p>
 
                                 <div className="flex items-center text-blue-500 font-semibold group-hover:gap-2 gap-1 transition-all">
                                     Browse Problems <ArrowRight className="h-5 w-5" />
                                 </div>
                             </div>
-
-                            {/* Background Decoration */}
                             <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-blue-500/5 blur-3xl group-hover:bg-blue-500/10 transition-colors" />
                         </Link>
 
-                        {/* System Design Card */}
+                        {/* Sandbox Card */}
                         <Link
-                            href="/design"
-                            className="group relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 transition-all hover:border-purple-500 hover:shadow-2xl hover:shadow-purple-500/10"
+                            href="/sandbox"
+                            className="group relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 transition-all hover:border-emerald-500 hover:shadow-2xl hover:shadow-emerald-500/10"
                         >
                             <div className="relative z-10 flex flex-col h-full">
-                                <div className="mb-6 inline-flex h-16 w-16 items-center justify-center rounded-xl bg-purple-500/10 text-purple-500 group-hover:scale-110 transition-transform duration-300">
-                                    <Layers className="h-8 w-8" />
+                                <div className="mb-6 inline-flex h-16 w-16 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-500 group-hover:scale-110 transition-transform duration-300">
+                                    <FlaskConical className="h-8 w-8" />
                                 </div>
 
                                 <h2 className="mb-3 text-2xl font-bold text-[var(--color-text-primary)]">
-                                    System Design
+                                    Sandbox
                                 </h2>
                                 <p className="mb-8 text-[var(--color-text-secondary)] leading-relaxed flex-grow">
-                                    Architect scalable distributed systems. Design components, define data flows, and simulate traffic to find bottlenecks.
+                                    Free-form canvas to design and experiment with system architectures.
                                 </p>
 
-                                <div className="flex items-center text-purple-500 font-semibold group-hover:gap-2 gap-1 transition-all">
-                                    Start Designing <ArrowRight className="h-5 w-5" />
+                                <div className="flex items-center text-emerald-500 font-semibold group-hover:gap-2 gap-1 transition-all">
+                                    Open Sandbox <ArrowRight className="h-5 w-5" />
                                 </div>
                             </div>
-
-                            {/* Background Decoration */}
-                            <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-purple-500/5 blur-3xl group-hover:bg-purple-500/10 transition-colors" />
+                            <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-emerald-500/5 blur-3xl group-hover:bg-emerald-500/10 transition-colors" />
                         </Link>
                     </div>
 
