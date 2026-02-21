@@ -20,8 +20,11 @@ export default function SimulationControls() {
 
     const {
         runSimulation,
+        startDebugMode,
         pauseSimulation,
         resumeSimulation,
+        stepSimulation,
+        injectRequest,
         reset,
         selectScenario,
         setSpeed,
@@ -61,17 +64,31 @@ export default function SimulationControls() {
         >
             {/* Play / Pause / Reset */}
             {status === 'idle' || status === 'error' ? (
-                <button onClick={runSimulation} style={btnStyle('#3b82f6')}>
-                    ▶ Simulate
-                </button>
+                <>
+                    <button onClick={runSimulation} style={btnStyle('#3b82f6')}>
+                        ▶ Simulate
+                    </button>
+                    <button onClick={startDebugMode} style={btnStyle('#8b5cf6')} title="Initialize without running — step through one request at a time">
+                        🔬 Debug
+                    </button>
+                </>
+            
             ) : status === 'running' ? (
                 <button onClick={pauseSimulation} style={btnStyle('#f59e0b')}>
                     ⏸ Pause
                 </button>
             ) : status === 'paused' ? (
-                <button onClick={resumeSimulation} style={btnStyle('#22c55e')}>
-                    ▶ Resume
-                </button>
+                <>
+                    <button onClick={stepSimulation} style={btnStyle('#8b5cf6')} title="Advance one frame">
+                        Step
+                    </button>
+                    <button onClick={injectRequest} style={btnStyle('#06b6d4')} title="Inject 1 request at first client">
+                        Inject 1 Request
+                    </button>
+                    <button onClick={resumeSimulation} style={btnStyle('#22c55e')}>
+                        ▶ Resume
+                    </button>
+                </>
             ) : (
                 <button onClick={reset} style={btnStyle('#64748b')}>
                     ↺ Reset

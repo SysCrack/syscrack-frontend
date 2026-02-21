@@ -8,11 +8,14 @@
 import type { CanvasNode, CanvasConnection } from '../types/canvas';
 import { SimulationRunner } from './SimulationRunner';
 import type { RequestParticle, LiveMetrics } from './SimulationRunner';
+import type { RequestTrace } from './types';
 
 type InMessage =
     | { type: 'init'; nodes: CanvasNode[]; connections: CanvasConnection[]; speed?: number; loadFactor?: number }
     | { type: 'start' }
     | { type: 'pause' }
+    | { type: 'step' }
+    | { type: 'injectRequest' }
     | { type: 'setSpeed'; value: number }
     | { type: 'setLoadFactor'; value: number }
     | { type: 'updateNodes'; nodes: CanvasNode[] };
@@ -24,10 +27,17 @@ export type WorkerTickMessage = {
     tick: number;
 };
 
+export type WorkerTraceMessage = {
+    type: 'trace';
+    trace: RequestTrace;
+};
+
 let runner: SimulationRunner | null = null;
+let lastNodes: CanvasNode[] = [];
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let lastTime = 0;
 let loopActive = false;
+let paused = false;
 const TARGET_MS = 1000 / 60; // ~60fps
 
 function stopLoop() {
@@ -39,11 +49,11 @@ function stopLoop() {
 }
 
 function startLoop() {
-    if (intervalId !== null) return;
+    if (intervalId !== null || paused) return;
     loopActive = true;
     lastTime = performance.now();
     intervalId = setInterval(() => {
-        if (!loopActive || !runner?.isRunning) return;
+        if (!loopActive || paused || !runner?.isRunning) return;
         const now = performance.now();
         const dt = Math.min(now - lastTime, 100);
         lastTime = now;
@@ -56,15 +66,26 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
     switch (msg.type) {
         case 'init': {
             stopLoop();
-            runner = new SimulationRunner(msg.nodes, msg.connections, (particles, metrics, tick) => {
-                const out: WorkerTickMessage = { type: 'tick', particles, metrics, tick };
-                self.postMessage(out);
-            });
+            lastNodes = msg.nodes;
+            runner = new SimulationRunner(
+                msg.nodes,
+                msg.connections,
+                (particles, metrics, tick) => {
+                    const out: WorkerTickMessage = { type: 'tick', particles, metrics, tick };
+                    self.postMessage(out);
+                },
+                {
+                    onTraceComplete: (trace) => {
+                        self.postMessage({ type: 'trace', trace } satisfies WorkerTraceMessage);
+                    },
+                },
+            );
             if (typeof msg.speed === 'number') runner.setSpeed(msg.speed);
             if (typeof msg.loadFactor === 'number') runner.setLoadFactor(msg.loadFactor);
             break;
         }
         case 'start': {
+            paused = false;
             if (runner) {
                 runner.startForExternalLoop();
                 startLoop();
@@ -72,6 +93,7 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
             break;
         }
         case 'pause': {
+            paused = true;
             stopLoop(); // Stop interval first so no further step() runs
             if (runner) runner.pause();
             break;
@@ -85,7 +107,24 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
             break;
         }
         case 'updateNodes': {
+            lastNodes = msg.nodes;
             if (runner) runner.updateNodes(msg.nodes);
+            break;
+        }
+        case 'step': {
+            if (runner) {
+                runner.stepUntilNextArrival();
+            }
+            break;
+        }
+        case 'injectRequest': {
+            if (runner) {
+                const client = lastNodes.find((n) => n.type === 'client');
+                if (client) {
+                    runner.injectSingleRequest(client.id);
+                    runner.stepOnce(1, true);
+                }
+            }
             break;
         }
         default:

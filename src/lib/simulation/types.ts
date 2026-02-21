@@ -116,6 +116,22 @@ export interface SimulationOutput {
     spofDiagnostics: SimulationDiagnostic[];
 }
 
+// ── Request trace (step-through debug) ──
+
+export interface RequestTraceEvent {
+    nodeId: string;
+    nodeName: string;
+    nodeType: string;
+    action: string;   // e.g. "routed to App Server (round-robin)", "cache HIT on /user/3"
+    timestamp: number; // sim tick
+}
+
+export interface RequestTrace {
+    id: string;
+    events: RequestTraceEvent[];
+    completed: boolean;
+}
+
 // ── Engine config ──
 
 export interface SimulationScenario {

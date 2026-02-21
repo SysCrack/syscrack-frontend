@@ -14,7 +14,7 @@
  *   - DB/Queue/Store: absorbs (leaf node)
  */
 import type { CanvasNode, CanvasConnection, CanvasComponentType } from '@/lib/types/canvas';
-import type { NodeSimSummary, NodeDetailMetrics, CacheEntry } from './types';
+import type { NodeSimSummary, NodeDetailMetrics, CacheEntry, RequestTraceEvent, RequestTrace } from './types';
 
 // ── Cache entry simulator (bounded entries, eviction by policy) ──
 
@@ -45,13 +45,16 @@ class CacheEntrySimulator {
         this.ttl = ttl;
     }
 
-    private static readonly TICKS_PER_SECOND = 60; // ~60 sim steps per real second
+    /** Compressed TTL: ttl seconds -> ticks so expiration is visible during simulation (e.g. 500s -> ~1000 ticks) */
+    private getTtlTicks(): number {
+        return Math.max(60, this.ttl * 2);
+    }
 
     advanceTick() {
         this.simTick++;
         // Proactive TTL expiration: remove entries that have exceeded their TTL
         if (this.evictionPolicy === 'ttl-based' && this.ttl > 0) {
-            const ttlTicks = this.ttl * CacheEntrySimulator.TICKS_PER_SECOND;
+            const ttlTicks = this.getTtlTicks();
             for (const [key, e] of Array.from(this.entries.entries())) {
                 if (this.simTick - e.insertedAt > ttlTicks) {
                     this.entries.delete(key);
@@ -99,7 +102,7 @@ class CacheEntrySimulator {
             case 'random':
                 return list[Math.floor(Math.random() * list.length)][0];
             case 'ttl-based': {
-                const ttlTicks = this.ttl * CacheEntrySimulator.TICKS_PER_SECOND;
+                const ttlTicks = this.getTtlTicks();
                 const expired = list.filter(([, e]) => this.simTick - e.insertedAt > ttlTicks);
                 const candidates = expired.length > 0 ? expired : list;
                 return candidates.reduce((a, b) => (a[1].insertedAt < b[1].insertedAt ? a : b))[0];
@@ -141,6 +144,7 @@ export interface RequestParticle {
     color: string;        // '#22d3ee' healthy, '#f87171' error
     sourceId: string;
     targetId: string;
+    traceId?: string;     // for step-through debug: tracks a single injected request
 }
 
 // ── Live metrics ──
@@ -212,6 +216,12 @@ export class SimulationRunner {
     private connectionsBySource: Map<string, CanvasConnection[]> = new Map(); // nodeId → outbound conns
     private nodeMap: Map<string, CanvasNode> = new Map();
 
+    // Step-through debug: active traces (traceId -> events)
+    private activeTraces: Map<string, RequestTraceEvent[]> = new Map();
+    private onTraceComplete?: (trace: RequestTrace) => void;
+    private _suppressClientSpawning = false;
+    private _tracedArrivalThisStep = false;
+
     speed = 1.0;
     loadFactor = 1.0;
 
@@ -219,8 +229,10 @@ export class SimulationRunner {
         private nodes: CanvasNode[],
         private connections: CanvasConnection[],
         private callback: RunnerCallback,
+        options?: { onTraceComplete?: (trace: RequestTrace) => void },
     ) {
         this.buildGraph();
+        this.onTraceComplete = options?.onTraceComplete;
     }
 
     /** Update node configurations dynamically (e.g., when instances are changed during simulation) */
@@ -352,6 +364,77 @@ export class SimulationRunner {
             }
         }
         nextParticleId = 0;
+        this.activeTraces.clear();
+    }
+
+    /** Advance one frame regardless of running state (for step-through debug) */
+    stepOnce(dt: number, suppressSpawning = false): void {
+        const wasRunning = this.running;
+        this.running = true;
+        this._suppressClientSpawning = suppressSpawning;
+        this._tracedArrivalThisStep = false;
+        this.step(dt);
+        this._suppressClientSpawning = false;
+        this.running = wasRunning;
+    }
+
+    /**
+     * Advance the simulation until a traced particle completes one connection hop.
+     * If no traced particles exist, advances a single frame instead.
+     */
+    stepUntilNextArrival(): void {
+        const hasTracedParticle = () => this.particles.some((p) => p.traceId);
+        if (!hasTracedParticle()) {
+            this.stepOnce(1000 / 60, true);
+            return;
+        }
+        const MAX_ITERATIONS = 300;
+        const wasRunning = this.running;
+        this.running = true;
+        this._suppressClientSpawning = true;
+        for (let i = 0; i < MAX_ITERATIONS; i++) {
+            this._tracedArrivalThisStep = false;
+            this.step(1000 / 60);
+            if (this._tracedArrivalThisStep || !hasTracedParticle()) break;
+        }
+        this._suppressClientSpawning = false;
+        this.running = wasRunning;
+    }
+
+    /** Inject a single request at the given client node; returns traceId for step-through debug */
+    injectSingleRequest(clientNodeId: string): string {
+        const node = this.nodeMap.get(clientNodeId);
+        if (!node || node.type !== 'client') return '';
+
+        const outConns = this.connectionsBySource.get(clientNodeId) ?? [];
+        if (outConns.length === 0) return '';
+
+        const traceId = `trace-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        this.activeTraces.set(traceId, []);
+
+        this.addTraceEvent(traceId, {
+            nodeId: node.id,
+            nodeName: node.name,
+            nodeType: node.type,
+            action: 'injected request',
+            timestamp: this.tick,
+        });
+
+        // Emit single particle on first connection (gold color for traced particles)
+        this.emitParticle(outConns[0], 1, '#eab308', traceId);
+        return traceId;
+    }
+
+    private addTraceEvent(traceId: string, event: RequestTraceEvent) {
+        const events = this.activeTraces.get(traceId);
+        if (events) events.push(event);
+    }
+
+    private finalizeTrace(traceId: string, completed: boolean) {
+        const events = this.activeTraces.get(traceId);
+        if (!events) return;
+        this.activeTraces.delete(traceId);
+        this.onTraceComplete?.({ id: traceId, events, completed });
     }
 
     setSpeed(s: number) { this.speed = Math.max(0.25, Math.min(4, s)); }
@@ -439,32 +522,31 @@ export class SimulationRunner {
             this.rpsAccumulator = 0;
         }
 
-        // 4. Continuous client spawning
-        for (const node of this.nodes) {
-            if (node.type !== 'client') continue;
+        // 4. Continuous client spawning (skipped in debug/step mode)
+        if (!this._suppressClientSpawning) {
+            for (const node of this.nodes) {
+                if (node.type !== 'client') continue;
 
-            const rps = this.getClientRps(node);
-            const loadRps = rps * this.loadFactor;
+                const rps = this.getClientRps(node);
+                const loadRps = rps * this.loadFactor;
 
-            // Cap visual particles per second (e.g. 3 to 25) so it doesn't flood the browser
-            // Higher load = more frequent particle spawning + larger particles
-            const visualParticlesPerSec = Math.min(25, Math.max(3, loadRps / 40));
-            const requestsPerParticle = loadRps / visualParticlesPerSec; // batch size per dot
+                const visualParticlesPerSec = Math.min(25, Math.max(3, loadRps / 40));
+                const requestsPerParticle = loadRps / visualParticlesPerSec;
 
-            let acc = this.clientAccumulators.get(node.id) ?? 0;
-            acc += (cappedDt / 1000) * visualParticlesPerSec * this.speed;
+                let acc = this.clientAccumulators.get(node.id) ?? 0;
+                acc += (cappedDt / 1000) * visualParticlesPerSec * this.speed;
 
-            while (acc >= 1) {
-                acc -= 1;
-                this.spawnFromNode(node.id, requestsPerParticle);
+                while (acc >= 1) {
+                    acc -= 1;
+                    this.spawnFromNode(node.id, requestsPerParticle);
 
-                // Track for client RPS metric
-                this.nodeRecentArrivals.set(
-                    node.id,
-                    (this.nodeRecentArrivals.get(node.id) ?? 0) + requestsPerParticle,
-                );
+                    this.nodeRecentArrivals.set(
+                        node.id,
+                        (this.nodeRecentArrivals.get(node.id) ?? 0) + requestsPerParticle,
+                    );
+                }
+                this.clientAccumulators.set(node.id, acc);
             }
-            this.clientAccumulators.set(node.id, acc);
         }
 
         // Tick logic for static metrics only
@@ -496,7 +578,7 @@ export class SimulationRunner {
 
     // ── Spawn ──
 
-    private spawnFromNode(nodeId: string, count: number) {
+    private spawnFromNode(nodeId: string, count: number, traceId?: string) {
         const outConns = this.connectionsBySource.get(nodeId) ?? [];
         if (outConns.length === 0) return;
 
@@ -507,26 +589,39 @@ export class SimulationRunner {
         this.nodeRequestCount.set(nodeId, (this.nodeRequestCount.get(nodeId) ?? 0) + count);
 
         if (nodeType === 'load_balancer') {
-            this.spawnFromLB(node, outConns, count);
+            this.spawnFromLB(node, outConns, count, traceId);
         } else if (nodeType === 'cache' || nodeType === 'cdn') {
-            this.spawnFromCache(node, outConns, count);
+            this.spawnFromCache(node, outConns, count, traceId);
         } else if (nodeType === 'api_gateway') {
             const allowance = this.apiGatewayAllowanceRemaining.get(node.id) ?? 0;
             const allowed = Math.min(count, Math.max(0, allowance));
             this.apiGatewayAllowanceRemaining.set(node.id, allowance - allowed);
             this.apiGatewayDropped.set(node.id, (this.apiGatewayDropped.get(node.id) ?? 0) + (count - allowed));
+            if (traceId) {
+                const action = allowed > 0 ? 'forwarded' : 'rate limited (dropped)';
+                this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action, timestamp: this.tick });
+                if (allowed === 0) {
+                    this._tracedArrivalThisStep = true;
+                    this.finalizeTrace(traceId, false);
+                    return;
+                }
+            }
             for (const conn of outConns) {
-                this.emitParticle(conn, allowed);
+                this.emitParticle(conn, allowed, undefined, traceId);
             }
         } else {
             // Default: broadcast to all downstream
+            if (traceId) {
+                const targetNames = outConns.map((c) => this.nodeMap.get(c.targetId)?.name ?? c.targetId).join(', ');
+                this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action: `forwarded to ${targetNames}`, timestamp: this.tick });
+            }
             for (const conn of outConns) {
-                this.emitParticle(conn, count);
+                this.emitParticle(conn, count, undefined, traceId);
             }
         }
     }
 
-    private spawnFromLB(node: CanvasNode, outConns: CanvasConnection[], count: number) {
+    private spawnFromLB(node: CanvasNode, outConns: CanvasConnection[], count: number, traceId?: string) {
         const algo = (node.specificConfig as Record<string, unknown>).algorithm as string || 'round-robin';
 
         if (outConns.length === 0) return;
@@ -536,13 +631,15 @@ export class SimulationRunner {
             m.set(targetId, (m.get(targetId) ?? 0) + n);
         };
 
+        let chosenConn: CanvasConnection | null = null;
+
         switch (algo) {
             case 'round-robin': {
                 const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
                 this.rrCounters.set(node.id, idx + 1);
-                const conn = outConns[idx];
-                this.emitParticle(conn, count);
-                recordSent(conn.targetId, count);
+                chosenConn = outConns[idx];
+                this.emitParticle(chosenConn, count, undefined, traceId);
+                recordSent(chosenConn.targetId, count);
                 break;
             }
 
@@ -556,32 +653,48 @@ export class SimulationRunner {
                         minConn = conn;
                     }
                 }
-                this.emitParticle(minConn, count);
+                chosenConn = minConn;
+                this.emitParticle(minConn, count, undefined, traceId);
                 recordSent(minConn.targetId, count);
                 break;
             }
 
             case 'random': {
                 const idx = Math.floor(Math.random() * outConns.length);
-                const conn = outConns[idx];
-                this.emitParticle(conn, count);
-                recordSent(conn.targetId, count);
+                chosenConn = outConns[idx];
+                this.emitParticle(chosenConn, count, undefined, traceId);
+                recordSent(chosenConn.targetId, count);
                 break;
             }
 
             case 'weighted':
             default: {
-                const perConn = Math.max(1, Math.round(count / outConns.length));
-                for (const conn of outConns) {
-                    this.emitParticle(conn, perConn);
-                    recordSent(conn.targetId, perConn);
+                // For traced single request: pick one backend so trace follows one path
+                if (traceId && count === 1) {
+                    const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
+                    this.rrCounters.set(node.id, idx + 1);
+                    chosenConn = outConns[idx];
+                    this.emitParticle(chosenConn, 1, undefined, traceId);
+                    recordSent(chosenConn.targetId, 1);
+                } else {
+                    const perConn = Math.max(1, Math.round(count / outConns.length));
+                    chosenConn = outConns[0];
+                    for (const conn of outConns) {
+                        this.emitParticle(conn, perConn, undefined, traceId);
+                        recordSent(conn.targetId, perConn);
+                    }
                 }
                 break;
             }
         }
+
+        if (traceId && chosenConn) {
+            const targetName = this.nodeMap.get(chosenConn.targetId)?.name ?? chosenConn.targetId;
+            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed to ${targetName} (${algo})`, timestamp: this.tick });
+        }
     }
 
-    private spawnFromCache(node: CanvasNode, outConns: CanvasConnection[], count: number) {
+    private spawnFromCache(node: CanvasNode, outConns: CanvasConnection[], count: number, traceId?: string) {
         const hitRate = this.getCacheHitRate(node);
         const misses = Math.max(1, Math.round(count * (1 - hitRate)));
         const hits = Math.round(Math.max(0, count - misses));
@@ -590,13 +703,24 @@ export class SimulationRunner {
         this.cacheMisses.set(node.id, (this.cacheMisses.get(node.id) ?? 0) + misses);
 
         const sim = this.cacheSimulators.get(node.id);
+        const key = sim ? CacheEntrySimulator.randomKeyFromPool() : '/unknown';
         if (sim) {
             for (let i = 0; i < hits; i++) sim.recordHit(CacheEntrySimulator.randomKeyFromPool());
             for (let i = 0; i < misses; i++) sim.recordMiss(CacheEntrySimulator.randomKeyFromPool());
         }
 
+        if (traceId) {
+            const action = hits > 0 && misses === 0 ? `cache HIT on ${key}` : `cache MISS on ${key} -> forwarded to downstream`;
+            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action, timestamp: this.tick });
+            if (hits > 0 && misses === 0) {
+                this._tracedArrivalThisStep = true;
+                this.finalizeTrace(traceId, true);
+                return;
+            }
+        }
+
         for (const conn of outConns) {
-            this.emitParticle(conn, misses, '#22d3ee');
+            this.emitParticle(conn, misses, '#f59e0b', traceId);
         }
     }
 
@@ -651,23 +775,38 @@ export class SimulationRunner {
 
         // Propagate downstream (unless it's a leaf)
         const isLeaf = this.isLeafNode(targetNode.type);
-        if (!isLeaf) {
+        if (particle.traceId) {
+            this._tracedArrivalThisStep = true;
+            if (isLeaf) {
+                this.addTraceEvent(particle.traceId, {
+                    nodeId: targetNode.id,
+                    nodeName: targetNode.name,
+                    nodeType: targetNode.type,
+                    action: 'request completed',
+                    timestamp: this.tick,
+                });
+                this.finalizeTrace(particle.traceId, true);
+            } else {
+                this.spawnFromNode(particle.targetId, particle.count, particle.traceId);
+            }
+        } else if (!isLeaf) {
             this.spawnFromNode(particle.targetId, particle.count);
         }
     }
 
     // ── Helpers ──
 
-    private emitParticle(conn: CanvasConnection, count: number, colorOverride?: string) {
+    private emitParticle(conn: CanvasConnection, count: number, colorOverride?: string, traceId?: string) {
         const id = `p${nextParticleId++}`;
         this.particles.push({
             id,
             connectionId: conn.id,
             t: 0,
             count,
-            color: colorOverride ?? '#22d3ee',
+            color: traceId ? '#eab308' : (colorOverride ?? '#22d3ee'),
             sourceId: conn.sourceId,
             targetId: conn.targetId,
+            traceId,
         });
 
         // Increment active count on target
