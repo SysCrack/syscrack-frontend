@@ -39,9 +39,12 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // Redirect /problems (deprecated/WIP) to home
+  if (request.nextUrl.pathname === "/problems" || request.nextUrl.pathname.startsWith("/problems/")) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+
   // Protected routes - redirect to login if not authenticated
-  // Note: We don't protect /problems because the list is public
-  // Individual problem details require auth but that's handled in the page
   const protectedPaths = ["/profile", "/settings"];
   const isProtectedPath = protectedPaths.some((path) =>
     request.nextUrl.pathname.startsWith(path)
@@ -60,7 +63,7 @@ export async function middleware(request: NextRequest) {
   );
 
   if (user && isAuthPath) {
-    return NextResponse.redirect(new URL("/problems", request.url));
+    return NextResponse.redirect(new URL("/", request.url));
   }
 
   return response;

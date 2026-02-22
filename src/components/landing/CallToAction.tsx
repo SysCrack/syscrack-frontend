@@ -15,18 +15,18 @@ export function CallToAction() {
 
           <div className="relative">
             <h2 className="text-2xl sm:text-3xl font-bold text-white mb-4">
-              Ready to optimize your SQL skills?
+              Ready to design systems?
             </h2>
             <p className="text-white/80 text-lg mb-8 max-w-xl mx-auto">
-              Join now and start practicing with real database queries. 
-              Track your progress and become a SQL performance expert.
+              Jump into the sandbox and build architectures. 
+              Simulate traffic, spot SPOFs, and learn what scales.
             </p>
             <Link href="/auth/signup">
               <Button
                 size="lg"
                 className="bg-white text-[var(--color-primary)] hover:bg-white/90 min-w-[200px] group"
               >
-                Start Learning
+                Get Started
                 <ArrowRight className="h-4 w-4 ml-1 group-hover:translate-x-0.5 transition-transform" />
               </Button>
             </Link>

@@ -17,20 +17,20 @@ export function Hero() {
         {/* Badge */}
         <div className="mb-6 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--color-primary-light)] text-[var(--color-primary)] text-sm font-medium">
           <Sparkles className="h-4 w-4" />
-          <span>Practice SQL optimization</span>
+          <span>Design. Simulate. Learn.</span>
         </div>
 
         {/* Headline */}
         <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-[var(--color-text-primary)] tracking-tight">
-          Master SQL
-          <span className="text-[var(--color-primary)]"> Performance</span>
+          Design Systems
+          <span className="text-[var(--color-primary)]"> at Scale</span>
         </h1>
 
         {/* Subheadline */}
         <p className="mt-6 text-lg sm:text-xl text-[var(--color-text-secondary)] max-w-2xl mx-auto leading-relaxed">
-          Practice optimizing database queries with instant feedback. 
-          Write SQL, get real execution times, and learn to build 
-          lightning-fast applications.
+          Build and simulate distributed architectures on a visual canvas. 
+          Get real-time feedback on RPS, latency, cost, and Points of Failure (PoF) - 
+          and learn what works before production.
         </p>
 
         {/* CTA Buttons */}
@@ -41,16 +41,16 @@ export function Hero() {
               <ArrowRight className="h-4 w-4 ml-1 group-hover:translate-x-0.5 transition-transform" />
             </Button>
           </Link>
-          <Link href="/problems">
+          <Link href="/sandbox">
             <Button variant="outline" size="lg" className="min-w-[200px]">
-              Browse Problems
+              Open Sandbox
             </Button>
           </Link>
         </div>
 
         {/* Social proof */}
         <p className="mt-8 text-sm text-[var(--color-text-tertiary)]">
-          Join developers improving their SQL skills
+          Join developers mastering system design
         </p>
       </div>
     </section>

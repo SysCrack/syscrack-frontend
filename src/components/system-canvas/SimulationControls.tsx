@@ -4,6 +4,7 @@
  */
 'use client';
 
+import { useState } from 'react';
 import { useCanvasSimulationStore, useCurrentResult } from '@/stores/canvasSimulationStore';
 
 const font = 'Inter, system-ui, sans-serif';
@@ -32,6 +33,7 @@ export default function SimulationControls() {
     } = useCanvasSimulationStore.getState();
 
     const isLive = status === 'running' || status === 'paused';
+    const [injectCount, setInjectCount] = useState(1);
 
     // Use live metrics when running, static metrics when viewing results
     const rps = isLive
@@ -82,8 +84,26 @@ export default function SimulationControls() {
                     <button onClick={stepSimulation} style={btnStyle('#8b5cf6')} title="Advance one frame">
                         Step
                     </button>
-                    <button onClick={injectRequest} style={btnStyle('#06b6d4')} title="Inject 1 request at first client">
-                        Inject 1 Request
+                    <select
+                        value={injectCount}
+                        onChange={(e) => setInjectCount(Number(e.target.value))}
+                        style={{
+                            background: '#1e293b',
+                            border: '1px solid #334155',
+                            borderRadius: 6,
+                            color: '#e2e8f0',
+                            fontSize: 11,
+                            padding: '4px 6px',
+                        }}
+                    >
+                        {[1, 5, 10, 50, 100].map((n) => (
+                            <option key={n} value={n}>
+                                {n}
+                            </option>
+                        ))}
+                    </select>
+                    <button onClick={() => injectRequest(injectCount)} style={btnStyle('#06b6d4')} title="Inject N requests at first client">
+                        Inject
                     </button>
                     <button onClick={resumeSimulation} style={btnStyle('#22c55e')}>
                         ▶ Resume

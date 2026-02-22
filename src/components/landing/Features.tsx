@@ -1,32 +1,32 @@
 "use client";
 
-import { Database, Zap, TrendingUp, Shield } from "lucide-react";
+import { LayoutGrid, Zap, ShieldCheck, FlaskConical } from "lucide-react";
 import { Card, CardContent } from "@/components/ui";
 
 const features = [
   {
-    icon: Database,
-    title: "Practice Real SQL",
+    icon: LayoutGrid,
+    title: "Visual Canvas",
     description:
-      "Write actual PostgreSQL queries executed against real databases. No simulations, just authentic database experience.",
+      "Drag-and-drop components — CDN, load balancers, API gateways, caches, databases, message queues — to design distributed architectures.",
   },
   {
     icon: Zap,
-    title: "Instant Feedback",
+    title: "Real-Time Simulation",
     description:
-      "Get immediate results with execution times, query plans, and optimization suggestions to improve your skills.",
+      "See RPS, latency, cost, and live request flow. Adjust load and scaling to understand how your architecture behaves under stress.",
   },
   {
-    icon: TrendingUp,
-    title: "Track Progress",
+    icon: ShieldCheck,
+    title: "Architecture Validation",
     description:
-      "Monitor your improvement with scores, streaks, and completion stats. See your SQL skills grow over time.",
+      "SPOF detection, connection diagnostics, and scaling awareness. Get actionable feedback on bottlenecks and resilience before you deploy.",
   },
   {
-    icon: Shield,
-    title: "Safe Environment",
+    icon: FlaskConical,
+    title: "Safe Experimentation",
     description:
-      "Each query runs in an isolated container. Experiment freely without worrying about breaking anything.",
+      "Run simulations client-side in the sandbox. Experiment with topology and config without production risk.",
   },
 ];
 
@@ -37,10 +37,10 @@ export function Features() {
         {/* Section header */}
         <div className="text-center mb-12">
           <h2 className="text-3xl sm:text-4xl font-bold text-[var(--color-text-primary)]">
-            Everything you need to master SQL
+            Everything you need to design systems
           </h2>
           <p className="mt-4 text-lg text-[var(--color-text-secondary)] max-w-2xl mx-auto">
-            From basic queries to complex optimizations, we have the tools to level up your database skills.
+            From high-level architecture to scaling and resilience, build the skills that matter in distributed systems.
           </p>
         </div>
 

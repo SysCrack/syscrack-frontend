@@ -39,7 +39,7 @@ export function LoginForm() {
   // Redirect if already logged in
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace("/problems");
+      router.replace("/");
     }
   }, [user, authLoading, router]);
 
@@ -57,7 +57,7 @@ export function LoginForm() {
       if (error) {
         setError(error.message);
       } else {
-        router.push("/problems");
+        router.push("/");
       }
     } catch (err) {
       setError("An unexpected error occurred. Please try again.");

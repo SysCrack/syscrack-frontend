@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Code2, Github, Twitter } from "lucide-react";
+import { Code2 } from "lucide-react";
+import { SiDiscord } from "react-icons/si";
 
 export function Footer() {
   const currentYear = new Date().getFullYear();
@@ -17,7 +18,7 @@ export function Footer() {
               <span className="text-lg font-semibold">Syscrack</span>
             </Link>
             <p className="text-sm text-[var(--color-text-secondary)] max-w-xs">
-              Master SQL performance with hands-on practice and instant feedback.
+              Design, simulate, and learn distributed systems on a visual canvas.
             </p>
           </div>
 
@@ -25,8 +26,8 @@ export function Footer() {
           <div className="flex flex-wrap gap-8 text-sm">
             <div className="flex flex-col gap-2">
               <h4 className="font-medium text-[var(--color-text-primary)]">Product</h4>
-              <Link href="/problems" className="text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors">
-                Problems
+              <Link href="/sandbox" className="text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors">
+                Sandbox
               </Link>
               <Link href="/pricing" className="text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors">
                 Pricing
@@ -46,22 +47,13 @@ export function Footer() {
           {/* Social */}
           <div className="flex items-center gap-3">
             <a
-              href="https://github.com"
+              href="https://discord.gg/cxPZAx4tng"
               target="_blank"
               rel="noopener noreferrer"
-              className="p-2 rounded-lg text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)] transition-colors"
-              aria-label="GitHub"
+              className="p-2 rounded-lg text-[var(--color-text-secondary)] hover:text-[#5865F2] hover:bg-[var(--color-surface)] transition-colors"
+              aria-label="Discord"
             >
-              <Github className="h-5 w-5" />
-            </a>
-            <a
-              href="https://twitter.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-2 rounded-lg text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)] transition-colors"
-              aria-label="Twitter"
-            >
-              <Twitter className="h-5 w-5" />
+              <SiDiscord className="h-5 w-5" />
             </a>
           </div>
         </div>

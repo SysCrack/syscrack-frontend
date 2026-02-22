@@ -162,8 +162,8 @@ export function ProfilePage() {
             <p className="text-[var(--color-text-secondary)] max-w-md mx-auto">
               Your submission history will appear here once you start solving problems.
             </p>
-            <Button className="mt-6" onClick={() => router.push("/problems")}>
-              Browse Problems
+            <Button className="mt-6" onClick={() => router.push("/")}>
+              Go to Home
             </Button>
           </div>
         </div>

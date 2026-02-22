@@ -39,6 +39,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     const viewport = useCanvasStore((s) => s.viewport);
     const connectingFrom = useCanvasStore((s) => s.connectingFrom);
     const connectingToPoint = useCanvasStore((s) => s.connectingToPoint);
+    const connectionValidationError = useCanvasStore((s) => s.connectionValidationError);
 
     // Simulation overlay data
     const simStatus = useCanvasSimulationStore((s) => s.status);
@@ -77,6 +78,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     
     // Connection tooltip state
     const [hoveredConnectionId, setHoveredConnectionId] = useState<string | null>(null);
+    const [connectionHoverMessage, setConnectionHoverMessage] = useState<string | null>(null);
     
     // Map diagnostics by component ID (SPOF + per-scenario)
     const diagnosticsByNodeId = new Map<string, SimulationDiagnostic>();
@@ -98,6 +100,10 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     const handleConnectionHover = useCallback((connectionId: string | null) => {
         setHoveredConnectionId(connectionId);
     }, []);
+
+    useEffect(() => {
+        if (!connectingFrom) setConnectionHoverMessage(null);
+    }, [connectingFrom]);
 
     // Node lookup for connections (needed for tooltip calculation)
     const nodeMap = new Map(nodes.map((n) => [n.id, n]));
@@ -432,6 +438,9 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                             onDragEnd={handleNodeDragEnd}
                             onPortClick={handlePortClick}
                             isConnecting={!!connectingFrom}
+                            connectingSourceType={connectingSourceNode?.type}
+                            connectingSourceNodeId={connectingFrom ?? undefined}
+                            onPortHoverChange={setConnectionHoverMessage}
                             simState={simActive ? nodeMetrics[node.id] : undefined}
                             isSpof={simActive ? spofSet.has(node.id) : false}
                             onDiagnosticClick={simActive && diagnosticsByNodeId.has(node.id) ? () => handleDiagnosticClick(node.id) : undefined}
@@ -439,6 +448,30 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                     ))}
                 </Layer>
             </Stage>
+
+            {/* Connection validation / hover tooltip */}
+            {(connectionValidationError || connectionHoverMessage) && (
+                <div
+                    style={{
+                        position: 'absolute',
+                        bottom: 24,
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        padding: '8px 16px',
+                        background: connectionValidationError
+                            ? 'rgba(239, 68, 68, 0.9)'
+                            : 'rgba(245, 158, 11, 0.9)',
+                        color: '#fff',
+                        fontSize: 12,
+                        borderRadius: 8,
+                        pointerEvents: 'auto',
+                        maxWidth: '80%',
+                        textAlign: 'center',
+                    }}
+                >
+                    {connectionValidationError ?? connectionHoverMessage}
+                </div>
+            )}
 
             {/* Component Diagnostics Dialog */}
             {openDiagnostic && nodeMap.has(openDiagnostic.nodeId) && (

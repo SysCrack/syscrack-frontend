@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Database, ArrowRight, FlaskConical } from "lucide-react";
+import { ArrowRight, FlaskConical } from "lucide-react";
 import { TopNav } from "@/components/layout/TopNav";
 import { Footer } from "@/components/layout/Footer";
 import { useAuthStore } from "@/stores/authStore";
@@ -21,39 +21,15 @@ export function Dashboard() {
                             Welcome back, <span className="text-[var(--color-primary)]">{firstName}</span>
                         </h1>
                         <p className="text-xl text-[var(--color-text-secondary)] max-w-2xl mx-auto">
-                            What would you like to practice today?
+                            What would you like to design today?
                         </p>
                     </div>
 
-                    <div className="grid md:grid-cols-2 gap-6 sm:gap-8">
-                        {/* SQL Problems Card */}
-                        <Link
-                            href="/problems"
-                            className="group relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 transition-all hover:border-[var(--color-primary)] hover:shadow-2xl hover:shadow-[var(--color-primary)]/10"
-                        >
-                            <div className="relative z-10 flex flex-col h-full">
-                                <div className="mb-6 inline-flex h-16 w-16 items-center justify-center rounded-xl bg-blue-500/10 text-blue-500 group-hover:scale-110 transition-transform duration-300">
-                                    <Database className="h-8 w-8" />
-                                </div>
-
-                                <h2 className="mb-3 text-2xl font-bold text-[var(--color-text-primary)]">
-                                    SQL Optimization
-                                </h2>
-                                <p className="mb-8 text-[var(--color-text-secondary)] leading-relaxed flex-grow">
-                                    Master database performance tuning with real-world query optimization challenges.
-                                </p>
-
-                                <div className="flex items-center text-blue-500 font-semibold group-hover:gap-2 gap-1 transition-all">
-                                    Browse Problems <ArrowRight className="h-5 w-5" />
-                                </div>
-                            </div>
-                            <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-blue-500/5 blur-3xl group-hover:bg-blue-500/10 transition-colors" />
-                        </Link>
-
+                    <div className="flex justify-center">
                         {/* Sandbox Card */}
                         <Link
                             href="/sandbox"
-                            className="group relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 transition-all hover:border-emerald-500 hover:shadow-2xl hover:shadow-emerald-500/10"
+                            className="group relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 transition-all hover:border-emerald-500 hover:shadow-2xl hover:shadow-emerald-500/10 max-w-md w-full"
                         >
                             <div className="relative z-10 flex flex-col h-full">
                                 <div className="mb-6 inline-flex h-16 w-16 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-500 group-hover:scale-110 transition-transform duration-300">

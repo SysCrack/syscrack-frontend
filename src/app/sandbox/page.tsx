@@ -14,6 +14,7 @@
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import ConfigSidebar from '@/components/system-canvas/ConfigSidebar';
+import ConnectionConfigPanel from '@/components/system-canvas/ConnectionConfigPanel';
 import LiveComponentInspector from '@/components/system-canvas/LiveComponentInspector';
 import RequestTracePanel from '@/components/system-canvas/RequestTracePanel';
 import SimulationControls from '@/components/system-canvas/SimulationControls';
@@ -90,6 +91,7 @@ function SandboxTitleBar() {
  * - If traceHistory has traces (step-through debug) → RequestTracePanel (collapsible)
  * - If simulation active → SimulationResults (collapsible)
  * - If simulation idle AND one node selected → ConfigSidebar
+ * - If connection selected → ConnectionConfigPanel
  * - Else → nothing
  */
 function RightPanel({
@@ -102,12 +104,14 @@ function RightPanel({
     const simStatus = useCanvasSimulationStore((s) => s.status);
     const traceHistory = useCanvasSimulationStore((s) => s.traceHistory);
     const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
+    const selectedConnectionId = useCanvasStore((s) => s.selectedConnectionId);
     const simActive = simStatus === 'running' || simStatus === 'paused' || simStatus === 'completed';
 
     if (simActive && selectedNodeIds.length === 1) return <LiveComponentInspector nodeId={selectedNodeIds[0]} />;
     if (traceHistory.length > 0) return <RequestTracePanel collapsed={collapsed} onToggle={onToggle} />;
     if (simActive) return <SimulationResults collapsed={collapsed} onToggle={onToggle} />;
     if (selectedNodeIds.length === 1) return <ConfigSidebar />;
+    if (selectedConnectionId) return <ConnectionConfigPanel />;
     return null;
 }
 
