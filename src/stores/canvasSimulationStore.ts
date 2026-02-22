@@ -41,6 +41,7 @@ interface CanvasSimulationStore {
     resumeSimulation: () => void;
     stepSimulation: () => void;
     injectRequest: (count?: number) => void;
+    injectSequential: (count?: number) => void;
     reset: () => void;
     selectScenario: (idx: number) => void;
     setSpeed: (s: number) => void;
@@ -146,7 +147,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             return;
         }
 
-        worker.onmessage = (e: MessageEvent<WorkerTickMessage | { type: 'trace'; trace: RequestTrace }>) => {
+        worker.onmessage = (e: MessageEvent<WorkerTickMessage | { type: 'trace'; trace: RequestTrace } | { type: 'injectSequentialDone' }>) => {
             const d = e.data;
             if (d.type === 'tick') {
                 const status = get().status;
@@ -154,6 +155,8 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
                 set({ particles: d.particles, liveMetrics: d.metrics, tick: d.tick });
             } else if (d.type === 'trace') {
                 set((s) => ({ traceHistory: [...s.traceHistory, d.trace] }));
+            } else if (d.type === 'injectSequentialDone') {
+                set({ status: 'running', _paused: false });
             }
         };
 
@@ -187,6 +190,10 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
 
     injectRequest: (count = 1) => {
         get()._worker?.postMessage({ type: 'injectRequest', count });
+    },
+
+    injectSequential: (count = 1) => {
+        get()._worker?.postMessage({ type: 'injectSequential', count });
     },
 
     resumeSimulation: () => {
