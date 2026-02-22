@@ -5,7 +5,7 @@
  * are updated via worker messages. Static engine run stays on main thread.
  */
 import { create } from 'zustand';
-import type { SimulationOutput, SimulationDiagnostic, ScenarioResult, NodeSimSummary, NodeDetailMetrics, RequestTrace } from '@/lib/simulation/types';
+import type { SimulationOutput, SimulationDiagnostic, ScenarioResult, NodeSimSummary, NodeDetailMetrics, RequestTrace, RequestMethod, PayloadSize } from '@/lib/simulation/types';
 import { SimulationEngine } from '@/lib/simulation/SimulationEngine';
 import type { RequestParticle, LiveMetrics } from '@/lib/simulation/SimulationRunner';
 import type { WorkerTickMessage } from '@/lib/simulation/simulation.worker';
@@ -30,9 +30,13 @@ interface CanvasSimulationStore {
     // Web Worker (live simulation runs off main thread)
     _worker: Worker | null;
     _paused: boolean;
+    _debugMode: boolean;
 
     // Step-through debug: all traces (most recent last)
     traceHistory: RequestTrace[];
+
+    // Request filter: which particles to show (All / Reads / Writes)
+    particleFilter: 'all' | 'reads' | 'writes';
 
     // Actions
     runSimulation: () => void;
@@ -40,12 +44,13 @@ interface CanvasSimulationStore {
     pauseSimulation: () => void;
     resumeSimulation: () => void;
     stepSimulation: () => void;
-    injectRequest: (count?: number) => void;
-    injectSequential: (count?: number) => void;
+    injectRequest: (count?: number, method?: RequestMethod, payloadSize?: PayloadSize, path?: string) => void;
+    injectSequential: (count?: number, method?: RequestMethod, payloadSize?: PayloadSize, path?: string) => void;
     reset: () => void;
     selectScenario: (idx: number) => void;
     setSpeed: (s: number) => void;
     setLoadFactor: (f: number) => void;
+    setParticleFilter: (f: 'all' | 'reads' | 'writes') => void;
     updateRunningSimulationNodes: () => void;
 }
 
@@ -61,7 +66,9 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
     tick: 0,
     _worker: null,
     _paused: false,
+    _debugMode: false,
     traceHistory: [],
+    particleFilter: 'all',
 
     runSimulation: () => {
         const { nodes, connections } = useCanvasStore.getState();
@@ -118,6 +125,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             liveMetrics: null,
             tick: 0,
             _paused: false,
+            _debugMode: false,
             traceHistory: [],
         });
     },
@@ -150,18 +158,15 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
         worker.onmessage = (e: MessageEvent<WorkerTickMessage | { type: 'trace'; trace: RequestTrace } | { type: 'injectSequentialDone' }>) => {
             const d = e.data;
             if (d.type === 'tick') {
-                const status = get().status;
-                if (status === 'paused' && !d.fromStep) return;
+                // In debug mode, accept all ticks (loop runs during sequential inject)
                 set({ particles: d.particles, liveMetrics: d.metrics, tick: d.tick });
             } else if (d.type === 'trace') {
                 set((s) => ({ traceHistory: [...s.traceHistory, d.trace] }));
-            } else if (d.type === 'injectSequentialDone') {
-                set({ status: 'running', _paused: false });
             }
+            // injectSequentialDone: no-op — stay in paused/debug mode
         };
 
         worker.postMessage({ type: 'init', nodes, connections, speed, loadFactor });
-        // Don't send 'start' — keep the worker idle so step/inject work from a clean slate
 
         set({
             status: 'paused',
@@ -173,6 +178,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             liveMetrics: null,
             tick: 0,
             _paused: true,
+            _debugMode: true,
             traceHistory: [],
         });
     },
@@ -188,22 +194,26 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
         get()._worker?.postMessage({ type: 'step' });
     },
 
-    injectRequest: (count = 1) => {
-        get()._worker?.postMessage({ type: 'injectRequest', count });
+    injectRequest: (count = 1, method?: RequestMethod, payloadSize?: PayloadSize, path?: string) => {
+        get()._worker?.postMessage({ type: 'injectRequest', count, method, payloadSize, path });
     },
 
-    injectSequential: (count = 1) => {
-        get()._worker?.postMessage({ type: 'injectSequential', count });
+    injectSequential: (count = 1, method?: RequestMethod, payloadSize?: PayloadSize, path?: string) => {
+        get()._worker?.postMessage({ type: 'injectSequential', count, method, payloadSize, path });
     },
 
     resumeSimulation: () => {
         set({ _paused: false });
         const w = get()._worker;
         if (w) {
-            w.postMessage({ type: 'setSpeed', value: get().speed });
-            w.postMessage({ type: 'setLoadFactor', value: get().loadFactor });
-            w.postMessage({ type: 'start' });
-            set({ status: 'running' });
+            if (get()._debugMode) {
+                w.postMessage({ type: 'resumeDebug' });
+            } else {
+                w.postMessage({ type: 'setSpeed', value: get().speed });
+                w.postMessage({ type: 'setLoadFactor', value: get().loadFactor });
+                w.postMessage({ type: 'start' });
+                set({ status: 'running' });
+            }
         }
     },
 
@@ -219,6 +229,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             tick: 0,
             _worker: null,
             _paused: false,
+            _debugMode: false,
             traceHistory: [],
         });
     },
@@ -235,6 +246,10 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
     setLoadFactor: (f) => {
         get()._worker?.postMessage({ type: 'setLoadFactor', value: f });
         set({ loadFactor: f });
+    },
+
+    setParticleFilter: (f) => {
+        set({ particleFilter: f });
     },
 
     updateRunningSimulationNodes: () => {

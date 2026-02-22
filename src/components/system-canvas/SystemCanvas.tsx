@@ -46,6 +46,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     const simOutput = useCanvasSimulationStore((s) => s.output);
     const currentResult = useCurrentResult();
     const particles = useCanvasSimulationStore((s) => s.particles);
+    const particleFilter = useCanvasSimulationStore((s) => s.particleFilter);
     const liveMetrics = useCanvasSimulationStore((s) => s.liveMetrics);
 
     // Sim is active when running, paused, or completed
@@ -108,13 +109,22 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     // Node lookup for connections (needed for tooltip calculation)
     const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
-    // Group particles by connection ID for efficient lookup
-    const particlesByConnection = new Map<string, typeof particles>();
-    for (const p of particles) {
-        const arr = particlesByConnection.get(p.connectionId);
-        if (arr) arr.push(p);
-        else particlesByConnection.set(p.connectionId, [p]);
-    }
+    // Group particles by connection ID (filtered by read/write)
+    const particlesByConnection = useMemo(() => {
+        const filtered =
+            particleFilter === 'all'
+                ? particles
+                : particleFilter === 'reads'
+                    ? particles.filter((p) => (p.readWrite ?? 'read') === 'read')
+                    : particles.filter((p) => p.readWrite === 'write');
+        const map = new Map<string, typeof particles>();
+        for (const p of filtered) {
+            const arr = map.get(p.connectionId);
+            if (arr) arr.push(p);
+            else map.set(p.connectionId, [p]);
+        }
+        return map;
+    }, [particles, particleFilter]);
 
     // Calculate tooltip content for hovered connection
     const tooltipContent = hoveredConnectionId && simActive ? (() => {

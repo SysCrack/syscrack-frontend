@@ -116,20 +116,45 @@ export interface SimulationOutput {
     spofDiagnostics: SimulationDiagnostic[];
 }
 
-// ── Request trace (step-through debug) ──
+// ── Request method / read-write types ──
+
+export type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+export type ReadWrite = 'read' | 'write';
+export type PayloadSize = 'tiny' | 'small' | 'medium' | 'large';
+
+export function methodToReadWrite(method?: RequestMethod): ReadWrite {
+    if (!method || method === 'GET') return 'read';
+    return 'write';
+}
+
+export const PAYLOAD_LATENCY_MULTIPLIER: Record<PayloadSize, number> = {
+    tiny: 0.8,
+    small: 1.0,
+    medium: 1.3,
+    large: 1.8,
+};
+
+// ── Request trace (step-through debug, DAG model) ──
 
 export interface RequestTraceEvent {
+    id: string;             // unique event ID within this trace
+    parentId?: string;      // parent event ID (undefined = root); enables tree structure
     nodeId: string;
     nodeName: string;
     nodeType: string;
-    action: string;   // e.g. "routed to App Server (round-robin)", "cache HIT on /user/3"
-    timestamp: number; // sim tick
+    action: string;
+    timestamp: number;      // sim tick
+    method?: RequestMethod;
+    readWrite?: ReadWrite;
+    latencyMs?: number;
+    status?: 'ok' | 'error';
 }
 
 export interface RequestTrace {
     id: string;
     events: RequestTraceEvent[];
     completed: boolean;
+    pendingBranches: number; // count of branches still in flight; 0 = all done
 }
 
 // ── Engine config ──

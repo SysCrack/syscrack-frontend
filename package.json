@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "baseline": "tsx scripts/run-baseline-capture.ts"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.0",

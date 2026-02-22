@@ -39,9 +39,35 @@ function NodeIcon({ nodeType }: { nodeType: string }) {
     );
 }
 
-function TraceEventRow({ event, isLast }: { event: RequestTraceEvent; isLast: boolean }) {
+/** Build a tree from flat DAG events using parentId */
+interface TraceTreeNode {
+    event: RequestTraceEvent;
+    children: TraceTreeNode[];
+}
+
+function buildTraceTree(events: RequestTraceEvent[]): TraceTreeNode[] {
+    const byId = new Map<string, TraceTreeNode>();
+    const roots: TraceTreeNode[] = [];
+    for (const event of events) {
+        byId.set(event.id, { event, children: [] });
+    }
+    for (const event of events) {
+        const node = byId.get(event.id)!;
+        if (event.parentId && byId.has(event.parentId)) {
+            byId.get(event.parentId)!.children.push(node);
+        } else {
+            roots.push(node);
+        }
+    }
+    return roots;
+}
+
+function TraceEventRow({ event, isLast, depth }: { event: RequestTraceEvent; isLast: boolean; depth: number }) {
+    const rwColor = event.readWrite === 'write' ? '#f97316' : '#3b82f6';
+    const statusDot = event.status === 'error' ? '#f87171' : event.status === 'ok' ? '#22c55e' : undefined;
+
     return (
-        <div style={{ display: 'flex', gap: 10, position: 'relative' }}>
+        <div style={{ display: 'flex', gap: 10, position: 'relative', paddingLeft: depth * 16 }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
                 <NodeIcon nodeType={event.nodeType} />
                 {!isLast && (
@@ -50,24 +76,50 @@ function TraceEventRow({ event, isLast }: { event: RequestTraceEvent; isLast: bo
                             width: 2,
                             flex: 1,
                             minHeight: 16,
-                            background: '#334155',
+                            background: depth > 0 ? '#4a5568' : '#334155',
                             marginTop: 4,
                         }}
                     />
                 )}
             </div>
             <div style={{ flex: 1, paddingBottom: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', marginBottom: 2 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
                     {event.nodeName}
+                    {event.method && (
+                        <span style={{ fontSize: 9, fontWeight: 700, color: rwColor, background: `${rwColor}22`, padding: '1px 5px', borderRadius: 3 }}>
+                            {event.method}
+                        </span>
+                    )}
+                    {statusDot && (
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusDot, display: 'inline-block' }} />
+                    )}
                 </div>
                 <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.4 }}>
                     {event.action}
                 </div>
-                <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
-                    tick {event.timestamp}
+                <div style={{ fontSize: 10, color: '#64748b', marginTop: 2, display: 'flex', gap: 8 }}>
+                    <span>tick {event.timestamp}</span>
+                    {event.latencyMs != null && <span style={{ color: '#a78bfa' }}>{event.latencyMs}ms</span>}
+                    {event.readWrite && <span style={{ color: rwColor }}>{event.readWrite}</span>}
                 </div>
             </div>
         </div>
+    );
+}
+
+function TraceTreeNodeView({ node, isLast, depth }: { node: TraceTreeNode; isLast: boolean; depth: number }) {
+    return (
+        <>
+            <TraceEventRow event={node.event} isLast={isLast && node.children.length === 0} depth={depth} />
+            {node.children.map((child, i) => (
+                <TraceTreeNodeView
+                    key={child.event.id}
+                    node={child}
+                    isLast={i === node.children.length - 1}
+                    depth={depth + 1}
+                />
+            ))}
+        </>
     );
 }
 
@@ -75,6 +127,10 @@ function TraceSection({ trace, index, isExpanded, onToggle }: { trace: RequestTr
     const hops = trace.events.length;
     const statusColor = trace.completed ? '#22c55e' : '#f59e0b';
     const statusLabel = trace.completed ? 'Completed' : 'Incomplete';
+    const firstEvent = trace.events[0];
+    const methodBadge = firstEvent?.method;
+
+    const tree = isExpanded ? buildTraceTree(trace.events) : [];
 
     return (
         <div
@@ -103,9 +159,21 @@ function TraceSection({ trace, index, isExpanded, onToggle }: { trace: RequestTr
                     textAlign: 'left',
                 }}
             >
-                <span style={{ fontWeight: 600 }}>
+                <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
                     Trace #{index + 1}
-                    <span style={{ marginLeft: 8, color: '#64748b', fontWeight: 400 }}>
+                    {methodBadge && (
+                        <span style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            color: methodBadge === 'GET' ? '#3b82f6' : '#f97316',
+                            background: methodBadge === 'GET' ? '#3b82f622' : '#f9731622',
+                            padding: '1px 5px',
+                            borderRadius: 3,
+                        }}>
+                            {methodBadge}
+                        </span>
+                    )}
+                    <span style={{ color: '#64748b', fontWeight: 400 }}>
                         ({hops} hop{hops !== 1 ? 's' : ''})
                     </span>
                 </span>
@@ -124,11 +192,12 @@ function TraceSection({ trace, index, isExpanded, onToggle }: { trace: RequestTr
             {isExpanded && (
                 <div style={{ padding: '0 12px 12px 12px', background: 'rgba(0,0,0,0.2)' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                        {trace.events.map((event, i) => (
-                            <TraceEventRow
-                                key={`${event.nodeId}-${event.timestamp}-${i}`}
-                                event={event}
-                                isLast={i === trace.events.length - 1}
+                        {tree.map((root, i) => (
+                            <TraceTreeNodeView
+                                key={root.event.id}
+                                node={root}
+                                isLast={i === tree.length - 1}
+                                depth={0}
                             />
                         ))}
                     </div>
@@ -219,11 +288,50 @@ export default function RequestTracePanel({ collapsed = false, onToggle }: Reque
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
+                    gap: 8,
                 }}
             >
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', textTransform: 'uppercase', letterSpacing: '0.05em', flex: 1, minWidth: 0 }}>
                     Request Traces ({traceHistory.length})
                 </span>
+                <div style={{ display: 'flex', gap: 2 }}>
+                    <button
+                        type="button"
+                        onClick={() => setExpandedIndices(new Set(traceHistory.map((_, i) => i)))}
+                        title="Expand all traces"
+                        style={{
+                            background: 'transparent',
+                            border: '1px solid #334155',
+                            borderRadius: 4,
+                            cursor: 'pointer',
+                            color: '#94a3b8',
+                            fontSize: 10,
+                            fontWeight: 600,
+                            padding: '3px 6px',
+                            fontFamily: font,
+                        }}
+                    >
+                        Expand
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setExpandedIndices(new Set())}
+                        title="Collapse all traces"
+                        style={{
+                            background: 'transparent',
+                            border: '1px solid #334155',
+                            borderRadius: 4,
+                            cursor: 'pointer',
+                            color: '#94a3b8',
+                            fontSize: 10,
+                            fontWeight: 600,
+                            padding: '3px 6px',
+                            fontFamily: font,
+                        }}
+                    >
+                        Collapse
+                    </button>
+                </div>
                 {onToggle && (
                     <button
                         type="button"
@@ -236,6 +344,7 @@ export default function RequestTracePanel({ collapsed = false, onToggle }: Reque
                             color: '#64748b',
                             fontSize: 14,
                             padding: 4,
+                            flexShrink: 0,
                         }}
                     >
                         ▶

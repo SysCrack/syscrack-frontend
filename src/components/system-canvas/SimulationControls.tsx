@@ -6,6 +6,7 @@
 
 import { useState } from 'react';
 import { useCanvasSimulationStore, useCurrentResult } from '@/stores/canvasSimulationStore';
+import type { RequestMethod, PayloadSize } from '@/lib/simulation/types';
 
 const font = 'Inter, system-ui, sans-serif';
 
@@ -31,10 +32,15 @@ export default function SimulationControls() {
         selectScenario,
         setSpeed,
         setLoadFactor,
+        setParticleFilter,
     } = useCanvasSimulationStore.getState();
+    const particleFilter = useCanvasSimulationStore((s) => s.particleFilter);
 
     const isLive = status === 'running' || status === 'paused';
     const [injectCount, setInjectCount] = useState(1);
+    const [injectMethod, setInjectMethod] = useState<RequestMethod>('GET');
+    const [injectPayload, setInjectPayload] = useState<PayloadSize>('small');
+    const [injectPath, setInjectPath] = useState('');
 
     // Use live metrics when running, static metrics when viewing results
     const rps = isLive
@@ -103,10 +109,62 @@ export default function SimulationControls() {
                             </option>
                         ))}
                     </select>
-                    <button onClick={() => injectRequest(injectCount)} style={btnStyle('#06b6d4')} title="Inject N requests at first client (burst)">
+                    <select
+                        value={injectMethod}
+                        onChange={(e) => setInjectMethod(e.target.value as RequestMethod)}
+                        style={{
+                            background: '#1e293b',
+                            border: '1px solid #334155',
+                            borderRadius: 6,
+                            color: injectMethod === 'GET' ? '#3b82f6' : '#f97316',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            padding: '4px 6px',
+                        }}
+                        title="Request method (GET = read, POST/PUT/DELETE = write)"
+                    >
+                        {(['GET', 'POST', 'PUT', 'DELETE'] as RequestMethod[]).map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                        ))}
+                    </select>
+                    <select
+                        value={injectPayload}
+                        onChange={(e) => setInjectPayload(e.target.value as PayloadSize)}
+                        style={{
+                            background: '#1e293b',
+                            border: '1px solid #334155',
+                            borderRadius: 6,
+                            color: '#e2e8f0',
+                            fontSize: 11,
+                            padding: '4px 6px',
+                        }}
+                        title="Payload size (affects latency)"
+                    >
+                        {(['tiny', 'small', 'medium', 'large'] as PayloadSize[]).map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                        ))}
+                    </select>
+                    <input
+                        type="text"
+                        value={injectPath}
+                        onChange={(e) => setInjectPath(e.target.value)}
+                        placeholder="/users/1"
+                        style={{
+                            background: '#1e293b',
+                            border: '1px solid #334155',
+                            borderRadius: 6,
+                            color: '#e2e8f0',
+                            fontSize: 11,
+                            padding: '4px 8px',
+                            width: 72,
+                            fontFamily: 'monospace',
+                        }}
+                        title="Request path (optional, shown in trace)"
+                    />
+                    <button onClick={() => injectRequest(injectCount, injectMethod, injectPayload, injectPath || undefined)} style={btnStyle('#06b6d4')} title="Inject N requests at first client (burst)">
                         Inject
                     </button>
-                    <button onClick={() => injectSequential(injectCount)} style={btnStyle('#0891b2')} title="Inject N requests spaced out, each follows behind the previous">
+                    <button onClick={() => injectSequential(injectCount, injectMethod, injectPayload, injectPath || undefined)} style={btnStyle('#0891b2')} title="Inject N requests spaced out, each follows behind the previous">
                         Inject Seq
                     </button>
                     <button onClick={resumeSimulation} style={btnStyle('#22c55e')}>
@@ -160,6 +218,33 @@ export default function SimulationControls() {
                         style={sliderStyle}
                     />
                     <span style={sliderValue}>{loadFactor}x</span>
+                </div>
+            )}
+
+            {/* Particle filter: All / Reads / Writes */}
+            {isLive && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 4 }}>
+                    {(['all', 'reads', 'writes'] as const).map((f) => (
+                        <button
+                            key={f}
+                            onClick={() => setParticleFilter(f)}
+                            style={{
+                                background: particleFilter === f ? '#1e293b' : 'transparent',
+                                border: `1px solid ${particleFilter === f ? '#3b82f6' : '#334155'}`,
+                                borderRadius: 4,
+                                color: particleFilter === f ? '#e2e8f0' : '#64748b',
+                                fontSize: 10,
+                                fontWeight: 600,
+                                padding: '3px 8px',
+                                cursor: 'pointer',
+                                fontFamily: font,
+                                textTransform: 'capitalize',
+                            }}
+                            title={f === 'all' ? 'Show all particles' : f === 'reads' ? 'Show read particles only' : 'Show write particles only'}
+                        >
+                            {f}
+                        </button>
+                    ))}
                 </div>
             )}
 

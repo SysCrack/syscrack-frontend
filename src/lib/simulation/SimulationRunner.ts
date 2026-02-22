@@ -15,7 +15,8 @@
  */
 import type { CanvasNode, CanvasConnection, CanvasComponentType } from '@/lib/types/canvas';
 import { PROTOCOL_FACTORS } from '@/lib/connectionRules';
-import type { NodeSimSummary, NodeDetailMetrics, CacheEntry, RequestTraceEvent, RequestTrace } from './types';
+import type { NodeSimSummary, NodeDetailMetrics, CacheEntry, RequestTraceEvent, RequestTrace, RequestMethod, ReadWrite, PayloadSize } from './types';
+import { methodToReadWrite, PAYLOAD_LATENCY_MULTIPLIER } from './types';
 
 // ── Cache entry simulator (bounded entries, eviction by policy) ──
 
@@ -113,6 +114,10 @@ class CacheEntrySimulator {
         }
     }
 
+    hasKey(key: string): boolean {
+        return this.entries.has(key);
+    }
+
     getEntries(): CacheEntry[] {
         const evictKey = this.entries.size >= this.maxEntries ? this.pickEvictionCandidate() : null;
         const entries = Array.from(this.entries.values()).map((e) => ({
@@ -146,6 +151,10 @@ export interface RequestParticle {
     sourceId: string;
     targetId: string;
     traceId?: string;     // for step-through debug: tracks a single injected request
+    method?: RequestMethod;
+    readWrite?: ReadWrite;
+    payloadSize?: PayloadSize;
+    path?: string;        // e.g. /users/123
 }
 
 // ── Live metrics ──
@@ -221,8 +230,9 @@ export class SimulationRunner {
     private connectionsByTarget: Map<string, CanvasConnection[]> = new Map(); // nodeId → inbound conns
     private nodeMap: Map<string, CanvasNode> = new Map();
 
-    // Step-through debug: active traces (traceId -> events)
-    private activeTraces: Map<string, RequestTraceEvent[]> = new Map();
+    // Step-through debug: active traces (traceId -> { events, pendingBranches })
+    private activeTraces: Map<string, { events: RequestTraceEvent[]; pendingBranches: number }> = new Map();
+    private _nextTraceEventId = 0;
     private onTraceComplete?: (trace: RequestTrace) => void;
     private _suppressClientSpawning = false;
     private _tracedArrivalThisStep = false;
@@ -450,39 +460,80 @@ export class SimulationRunner {
     }
 
     /** Inject a single request at the given client node; returns traceId for step-through debug */
-    injectSingleRequest(clientNodeId: string): string {
+    injectSingleRequest(
+        clientNodeId: string,
+        method?: RequestMethod,
+        payloadSize?: PayloadSize,
+        path?: string,
+    ): string {
         const node = this.nodeMap.get(clientNodeId);
         if (!node || node.type !== 'client') return '';
 
         const outConns = this.connectionsBySource.get(clientNodeId) ?? [];
         if (outConns.length === 0) return '';
 
+        const rw = methodToReadWrite(method);
         const traceId = `trace-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-        this.activeTraces.set(traceId, []);
+        this.activeTraces.set(traceId, { events: [], pendingBranches: 1 });
 
+        const pathStr = path ? ` ${path}` : '';
         this.addTraceEvent(traceId, {
             nodeId: node.id,
             nodeName: node.name,
             nodeType: node.type,
-            action: 'injected request',
+            action: `injected ${method ?? 'GET'}${pathStr} request`,
             timestamp: this.tick,
+            method,
+            readWrite: rw,
         });
 
-        // Emit single particle on first connection (gold color for traced particles)
-        this.emitParticle(outConns[0], 1, '#eab308', traceId);
+        const fakeParent: RequestParticle = {
+            id: '', connectionId: '', t: 0, count: 1, color: '',
+            sourceId: '', targetId: '', traceId,
+            method, readWrite: rw, payloadSize, path,
+        };
+        this.emitParticle(outConns[0], 1, undefined, traceId, fakeParent);
         return traceId;
     }
 
-    private addTraceEvent(traceId: string, event: RequestTraceEvent) {
-        const events = this.activeTraces.get(traceId);
-        if (events) events.push(event);
+    private addTraceEvent(
+        traceId: string,
+        event: Omit<RequestTraceEvent, 'id'> & { parentId?: string },
+    ): string {
+        const trace = this.activeTraces.get(traceId);
+        if (!trace) return '';
+        const eventId = `evt-${this._nextTraceEventId++}`;
+        trace.events.push({ ...event, id: eventId });
+        return eventId;
     }
 
+    /** Decrement pending branches; finalize when all done */
+    private finalizeBranch(traceId: string, completed: boolean) {
+        const trace = this.activeTraces.get(traceId);
+        if (!trace) return;
+        trace.pendingBranches = Math.max(0, trace.pendingBranches - 1);
+        if (trace.pendingBranches <= 0) {
+            this.activeTraces.delete(traceId);
+            this.onTraceComplete?.({
+                id: traceId,
+                events: trace.events,
+                completed,
+                pendingBranches: 0,
+            });
+        }
+    }
+
+    /** Legacy: finalize entire trace immediately (for non-branching paths) */
     private finalizeTrace(traceId: string, completed: boolean) {
-        const events = this.activeTraces.get(traceId);
-        if (!events) return;
+        const trace = this.activeTraces.get(traceId);
+        if (!trace) return;
         this.activeTraces.delete(traceId);
-        this.onTraceComplete?.({ id: traceId, events, completed });
+        this.onTraceComplete?.({
+            id: traceId,
+            events: trace.events,
+            completed,
+            pendingBranches: 0,
+        });
     }
 
     setSpeed(s: number) { this.speed = Math.max(0.25, Math.min(4, s)); }
@@ -628,28 +679,28 @@ export class SimulationRunner {
 
     // ── Spawn ──
 
-    private spawnFromNode(nodeId: string, count: number, traceId?: string) {
+    private spawnFromNode(nodeId: string, count: number, traceId?: string, parentParticle?: RequestParticle) {
         const outConns = this.connectionsBySource.get(nodeId) ?? [];
         if (outConns.length === 0) return;
 
         const node = this.nodeMap.get(nodeId)!;
         const nodeType = node.type;
 
-        // Track requests through this node
         this.nodeRequestCount.set(nodeId, (this.nodeRequestCount.get(nodeId) ?? 0) + count);
 
         if (nodeType === 'load_balancer') {
-            this.spawnFromLB(node, outConns, count, traceId);
+            this.spawnFromLB(node, outConns, count, traceId, parentParticle);
         } else if (nodeType === 'cache' || nodeType === 'cdn') {
-            this.spawnFromCache(node, outConns, count, traceId);
+            this.spawnFromCache(node, outConns, count, traceId, parentParticle);
         } else if (nodeType === 'api_gateway') {
             const allowance = this.apiGatewayAllowanceRemaining.get(node.id) ?? 0;
             const allowed = Math.min(count, Math.max(0, allowance));
             this.apiGatewayAllowanceRemaining.set(node.id, allowance - allowed);
             this.apiGatewayDropped.set(node.id, (this.apiGatewayDropped.get(node.id) ?? 0) + (count - allowed));
             if (traceId) {
-                const action = allowed > 0 ? 'forwarded' : 'rate limited (dropped)';
-                this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action, timestamp: this.tick });
+                const rw = parentParticle?.readWrite;
+                const action = allowed > 0 ? `forwarded ${parentParticle?.method ?? ''} request`.trim() : 'rate limited (dropped)';
+                this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action, timestamp: this.tick, method: parentParticle?.method, readWrite: rw });
                 if (allowed === 0) {
                     this._tracedArrivalThisStep = true;
                     this.finalizeTrace(traceId, false);
@@ -657,21 +708,20 @@ export class SimulationRunner {
                 }
             }
             for (const conn of outConns) {
-                this.emitParticle(conn, allowed, undefined, traceId);
+                this.emitParticle(conn, allowed, undefined, traceId, parentParticle);
             }
         } else {
-            // Default: broadcast to all downstream
             if (traceId) {
                 const targetNames = outConns.map((c) => this.nodeMap.get(c.targetId)?.name ?? c.targetId).join(', ');
-                this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action: `forwarded to ${targetNames}`, timestamp: this.tick });
+                this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action: `forwarded to ${targetNames}`, timestamp: this.tick, method: parentParticle?.method, readWrite: parentParticle?.readWrite });
             }
             for (const conn of outConns) {
-                this.emitParticle(conn, count, undefined, traceId);
+                this.emitParticle(conn, count, undefined, traceId, parentParticle);
             }
         }
     }
 
-    private spawnFromLB(node: CanvasNode, outConns: CanvasConnection[], count: number, traceId?: string) {
+    private spawnFromLB(node: CanvasNode, outConns: CanvasConnection[], count: number, traceId?: string, pp?: RequestParticle) {
         const algo = (node.specificConfig as Record<string, unknown>).algorithm as string || 'round-robin';
 
         if (outConns.length === 0) return;
@@ -688,7 +738,7 @@ export class SimulationRunner {
                 const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
                 this.rrCounters.set(node.id, idx + 1);
                 chosenConn = outConns[idx];
-                this.emitParticle(chosenConn, count, undefined, traceId);
+                this.emitParticle(chosenConn, count, undefined, traceId, pp);
                 recordSent(chosenConn.targetId, count);
                 break;
             }
@@ -704,7 +754,7 @@ export class SimulationRunner {
                     }
                 }
                 chosenConn = minConn;
-                this.emitParticle(minConn, count, undefined, traceId);
+                this.emitParticle(minConn, count, undefined, traceId, pp);
                 recordSent(minConn.targetId, count);
                 break;
             }
@@ -712,7 +762,7 @@ export class SimulationRunner {
             case 'random': {
                 const idx = Math.floor(Math.random() * outConns.length);
                 chosenConn = outConns[idx];
-                this.emitParticle(chosenConn, count, undefined, traceId);
+                this.emitParticle(chosenConn, count, undefined, traceId, pp);
                 recordSent(chosenConn.targetId, count);
                 break;
             }
@@ -723,7 +773,6 @@ export class SimulationRunner {
                 const useWeights = totalWeight > 0 && outConns.some((c) => (bw?.[c.targetId] ?? 1) > 0);
 
                 if (traceId && count === 1) {
-                    // Pick one backend by weight (weighted random)
                     if (useWeights) {
                         let r = Math.random() * totalWeight;
                         for (const conn of outConns) {
@@ -740,10 +789,9 @@ export class SimulationRunner {
                         this.rrCounters.set(node.id, idx + 1);
                         chosenConn = outConns[idx];
                     }
-                    this.emitParticle(chosenConn!, 1, undefined, traceId);
+                    this.emitParticle(chosenConn!, 1, undefined, traceId, pp);
                     recordSent(chosenConn!.targetId, 1);
                 } else if (useWeights) {
-                    // Distribute count by weight; largest remainder to fix rounding
                     const frac = outConns.map((c) => ({
                         conn: c,
                         w: bw?.[c.targetId] ?? 1,
@@ -763,7 +811,7 @@ export class SimulationRunner {
                     chosenConn = frac[0].conn;
                     for (const f of frac) {
                         if (f.base > 0) {
-                            this.emitParticle(f.conn, f.base, undefined, traceId);
+                            this.emitParticle(f.conn, f.base, undefined, traceId, pp);
                             recordSent(f.conn.targetId, f.base);
                         }
                     }
@@ -771,18 +819,17 @@ export class SimulationRunner {
                     const perConn = Math.max(1, Math.round(count / outConns.length));
                     chosenConn = outConns[0];
                     for (const conn of outConns) {
-                        this.emitParticle(conn, perConn, undefined, traceId);
+                        this.emitParticle(conn, perConn, undefined, traceId, pp);
                         recordSent(conn.targetId, perConn);
                     }
                 }
                 break;
             }
             default: {
-                // Fallback: equal split (e.g. unknown algorithm)
                 const perConn = Math.max(1, Math.round(count / outConns.length));
                 chosenConn = outConns[0];
                 for (const conn of outConns) {
-                    this.emitParticle(conn, perConn, undefined, traceId);
+                    this.emitParticle(conn, perConn, undefined, traceId, pp);
                     recordSent(conn.targetId, perConn);
                 }
                 break;
@@ -791,11 +838,64 @@ export class SimulationRunner {
 
         if (traceId && chosenConn) {
             const targetName = this.nodeMap.get(chosenConn.targetId)?.name ?? chosenConn.targetId;
-            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed to ${targetName} (${algo})`, timestamp: this.tick });
+            const methodStr = pp?.method ? ` ${pp.method}` : '';
+            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed${methodStr} to ${targetName} (${algo})`, timestamp: this.tick, method: pp?.method, readWrite: pp?.readWrite });
         }
     }
 
-    private spawnFromCache(node: CanvasNode, outConns: CanvasConnection[], count: number, traceId?: string) {
+    private spawnFromCache(node: CanvasNode, outConns: CanvasConnection[], count: number, traceId?: string, pp?: RequestParticle) {
+        const rw = pp?.readWrite ?? 'read';
+        const isCdn = node.type === 'cdn';
+        const c = node.specificConfig as Record<string, unknown>;
+        const writeStrategy = (c.writeStrategy as string) ?? 'write-around';
+
+        // CDN: writes always pass through (no cache involvement)
+        // Cache: writes branch on writeStrategy
+        if (rw === 'write' && !isCdn) {
+            this.handleCacheWrite(node, outConns, count, traceId, pp, writeStrategy);
+            return;
+        }
+
+        // CDN writes: pass through to origin
+        if (rw === 'write' && isCdn) {
+            if (traceId) {
+                this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `CDN pass-through (${pp?.method ?? 'POST'}, not cacheable)`, timestamp: this.tick, method: pp?.method, readWrite: rw });
+            }
+            for (const conn of outConns) {
+                this.emitParticle(conn, count, undefined, traceId, pp);
+            }
+            return;
+        }
+
+        const sim = this.cacheSimulators.get(node.id);
+        const key = (traceId && pp?.path) ? pp.path : (sim ? CacheEntrySimulator.randomKeyFromPool() : '/unknown');
+
+        // Traced with path: use path as cache key for deterministic hit/miss
+        if (traceId && pp?.path && sim) {
+            const isHit = sim.hasKey(pp.path);
+            if (isHit) sim.recordHit(pp.path);
+            else sim.recordMiss(pp.path);
+            this.cacheHits.set(node.id, (this.cacheHits.get(node.id) ?? 0) + (isHit ? 1 : 0));
+            this.cacheMisses.set(node.id, (this.cacheMisses.get(node.id) ?? 0) + (isHit ? 0 : 1));
+
+            const readStrategy = (c.readStrategy as string) ?? 'cache-aside';
+            const strategyLabel = readStrategy === 'read-through' ? ' (read-through)' : '';
+            const action = isHit
+                ? `cache HIT${strategyLabel} on ${key}`
+                : `cache MISS${strategyLabel} on ${key} -> forwarded to downstream`;
+            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action, timestamp: this.tick, method: pp?.method, readWrite: rw });
+            if (isHit) {
+                this._tracedArrivalThisStep = true;
+                this.finalizeBranch(traceId, true);
+                return;
+            }
+            for (const conn of outConns) {
+                this.emitParticle(conn, 1, '#f59e0b', traceId, pp);
+            }
+            return;
+        }
+
+        // Non-traced or no path: use hitRate + random keys
         const hitRate = this.getCacheHitRate(node);
         const misses = Math.max(1, Math.round(count * (1 - hitRate)));
         const hits = Math.round(Math.max(0, count - misses));
@@ -803,32 +903,33 @@ export class SimulationRunner {
         this.cacheHits.set(node.id, (this.cacheHits.get(node.id) ?? 0) + hits);
         this.cacheMisses.set(node.id, (this.cacheMisses.get(node.id) ?? 0) + misses);
 
-        const sim = this.cacheSimulators.get(node.id);
-        const key = sim ? CacheEntrySimulator.randomKeyFromPool() : '/unknown';
         if (sim) {
             for (let i = 0; i < hits; i++) sim.recordHit(CacheEntrySimulator.randomKeyFromPool());
             for (let i = 0; i < misses; i++) sim.recordMiss(CacheEntrySimulator.randomKeyFromPool());
         }
 
         if (traceId) {
-            const action = hits > 0 && misses === 0 ? `cache HIT on ${key}` : `cache MISS on ${key} -> forwarded to downstream`;
-            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action, timestamp: this.tick });
+            const readStrategy = (c.readStrategy as string) ?? 'cache-aside';
+            const strategyLabel = readStrategy === 'read-through' ? ' (read-through)' : '';
+            const action = hits > 0 && misses === 0
+                ? `cache HIT${strategyLabel} on ${key}`
+                : `cache MISS${strategyLabel} on ${key} -> forwarded to downstream`;
+            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action, timestamp: this.tick, method: pp?.method, readWrite: rw });
             if (hits > 0 && misses === 0) {
                 this._tracedArrivalThisStep = true;
-                this.finalizeTrace(traceId, true);
+                this.finalizeBranch(traceId, true);
                 return;
             }
         }
 
         if (traceId) {
-            // Traced: emit immediately so user sees the particle
             for (const conn of outConns) {
-                this.emitParticle(conn, misses, '#f59e0b', traceId);
+                this.emitParticle(conn, misses, '#f59e0b', traceId, pp);
             }
             return;
         }
 
-        // Non-traced: throttle particle emission so visual density reflects hit rate
+        // Non-traced: throttle particle emission
         const missRate = 1 - hitRate;
         const k = Math.max(1, Math.round(1 / missRate));
         let acc = this.cacheDownstreamAccumulator.get(node.id) ?? 0;
@@ -840,10 +941,56 @@ export class SimulationRunner {
 
         if (batchCount >= k && acc > 0) {
             for (const conn of outConns) {
-                this.emitParticle(conn, acc, '#f59e0b');
+                this.emitParticle(conn, acc, '#f59e0b', undefined, pp);
             }
             this.cacheDownstreamAccumulator.set(node.id, 0);
             this.cacheDownstreamBatchCount.set(node.id, 0);
+        }
+    }
+
+    /** Handle write requests arriving at a Cache node */
+    private handleCacheWrite(
+        node: CanvasNode, outConns: CanvasConnection[], count: number,
+        traceId?: string, pp?: RequestParticle, writeStrategy?: string,
+    ) {
+        const sim = this.cacheSimulators.get(node.id);
+        const key = (traceId && pp?.path) ? pp.path : (sim ? CacheEntrySimulator.randomKeyFromPool() : '/unknown');
+
+        switch (writeStrategy) {
+            case 'write-through': {
+                if (sim) sim.recordHit(key);
+                if (traceId) {
+                    const trace = this.activeTraces.get(traceId);
+                    if (trace) {
+                        trace.pendingBranches += 1;
+                        this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `cache updated via write-through on ${key}`, timestamp: this.tick, method: pp?.method, readWrite: 'write', status: 'ok' });
+                        this.finalizeBranch(traceId, true);
+                    }
+                }
+                for (const conn of outConns) {
+                    this.emitParticle(conn, count, undefined, traceId, pp);
+                }
+                break;
+            }
+            case 'write-behind': {
+                if (sim) sim.recordHit(key);
+                if (traceId) {
+                    this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `write-behind: cached on ${key}, DB write is async. Subsequent reads may return stale data.`, timestamp: this.tick, method: pp?.method, readWrite: 'write', status: 'ok' });
+                    this._tracedArrivalThisStep = true;
+                    this.finalizeBranch(traceId, true);
+                }
+                break;
+            }
+            case 'write-around':
+            default: {
+                if (traceId) {
+                    this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `write-around: ${key} bypassed, existing cache entry for ${key} may be stale`, timestamp: this.tick, method: pp?.method, readWrite: 'write' });
+                }
+                for (const conn of outConns) {
+                    this.emitParticle(conn, count, undefined, traceId, pp);
+                }
+                break;
+            }
         }
     }
 
@@ -893,15 +1040,30 @@ export class SimulationRunner {
             );
         }
 
-        // Add latency (node processing + protocol overhead)
+        // Add latency (node processing + protocol overhead + payload + write overhead)
         const protocolOverhead = conn ? (PROTOCOL_FACTORS[conn.protocol]?.overheadMs ?? 0) : 0;
-        const latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
+        let latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
+
+        // Payload size multiplier
+        const payloadMult = PAYLOAD_LATENCY_MULTIPLIER[particle.payloadSize ?? 'small'] ?? 1.0;
+        latency *= payloadMult;
+
+        // Write overhead for storage nodes (+20% for DB, +100% for object store)
+        const rw = particle.readWrite ?? 'read';
+        if (rw === 'write') {
+            if (targetNode.type === 'database_sql' || targetNode.type === 'database_nosql') {
+                latency *= 1.2;
+            } else if (targetNode.type === 'object_store') {
+                latency *= 2.0;
+            }
+        }
+
         this.nodeLatencySum.set(
             particle.targetId,
             (this.nodeLatencySum.get(particle.targetId) ?? 0) + latency * particle.count,
         );
 
-        // Message queue: track enqueued (arrivals at queue)
+        // Message queue: track enqueued (arrivals at queue; MQ ignores readWrite)
         if (targetNode.type === 'message_queue') {
             this.mqEnqueued.set(
                 particle.targetId,
@@ -914,38 +1076,65 @@ export class SimulationRunner {
         if (particle.traceId) {
             this._tracedArrivalThisStep = true;
             if (isLeaf) {
+                const methodStr = particle.method ? ` ${particle.method}` : '';
+                const rwStr = rw === 'write' ? ' (write)' : '';
+                const errorNote = isOverloaded ? ' — DB write failed; cache may be inconsistent' : '';
                 this.addTraceEvent(particle.traceId, {
                     nodeId: targetNode.id,
                     nodeName: targetNode.name,
                     nodeType: targetNode.type,
-                    action: 'request completed',
+                    action: `${targetNode.type === 'message_queue' ? 'enqueued' : 'processed'}${methodStr} request${rwStr}${errorNote}`,
                     timestamp: this.tick,
+                    method: particle.method,
+                    readWrite: rw,
+                    latencyMs: Math.round(latency),
+                    status: isOverloaded ? 'error' : 'ok',
                 });
-                this.finalizeTrace(particle.traceId, true);
+                this.finalizeBranch(particle.traceId, !isOverloaded);
             } else {
-                this.spawnFromNode(particle.targetId, particle.count, particle.traceId);
+                this.spawnFromNode(particle.targetId, particle.count, particle.traceId, particle);
             }
         } else if (!isLeaf) {
-            this.spawnFromNode(particle.targetId, particle.count);
+            this.spawnFromNode(particle.targetId, particle.count, undefined, particle);
         }
     }
 
     // ── Helpers ──
 
-    private emitParticle(conn: CanvasConnection, count: number, colorOverride?: string, traceId?: string) {
+    private emitParticle(
+        conn: CanvasConnection,
+        count: number,
+        colorOverride?: string,
+        traceId?: string,
+        parentParticle?: RequestParticle,
+    ) {
         const id = `p${nextParticleId++}`;
+        const rw = parentParticle?.readWrite;
+        let color: string;
+        if (traceId) {
+            color = rw === 'write' ? '#f59e0b' : '#eab308';
+        } else if (rw === 'write') {
+            color = colorOverride ?? '#f97316';
+        } else if (rw === 'read') {
+            color = colorOverride ?? '#3b82f6';
+        } else {
+            color = colorOverride ?? '#22d3ee';
+        }
         this.particles.push({
             id,
             connectionId: conn.id,
             t: 0,
             count,
-            color: traceId ? '#eab308' : (colorOverride ?? '#22d3ee'),
+            color,
             sourceId: conn.sourceId,
             targetId: conn.targetId,
             traceId,
+            method: parentParticle?.method,
+            readWrite: parentParticle?.readWrite,
+            payloadSize: parentParticle?.payloadSize,
+            path: parentParticle?.path,
         });
 
-        // Increment active count on target
         this.nodeActiveCount.set(
             conn.targetId,
             (this.nodeActiveCount.get(conn.targetId) ?? 0) + 1,

@@ -8,15 +8,16 @@
 import type { CanvasNode, CanvasConnection } from '../types/canvas';
 import { SimulationRunner } from './SimulationRunner';
 import type { RequestParticle, LiveMetrics } from './SimulationRunner';
-import type { RequestTrace } from './types';
+import type { RequestTrace, RequestMethod, PayloadSize } from './types';
 
 type InMessage =
     | { type: 'init'; nodes: CanvasNode[]; connections: CanvasConnection[]; speed?: number; loadFactor?: number }
     | { type: 'start' }
     | { type: 'pause' }
+    | { type: 'resumeDebug' }
     | { type: 'step' }
-    | { type: 'injectRequest'; count?: number }
-    | { type: 'injectSequential'; count?: number }
+    | { type: 'injectRequest'; count?: number; method?: RequestMethod; payloadSize?: PayloadSize; path?: string }
+    | { type: 'injectSequential'; count?: number; method?: RequestMethod; payloadSize?: PayloadSize; path?: string }
     | { type: 'setSpeed'; value: number }
     | { type: 'setLoadFactor'; value: number }
     | { type: 'updateNodes'; nodes: CanvasNode[] };
@@ -97,10 +98,19 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
         }
         case 'pause': {
             paused = true;
-            stopLoop(); // Stop interval first so no further step() runs
+            stopLoop();
             if (runner) {
                 runner.setTraceOnlyMode(false);
                 runner.pause();
+            }
+            break;
+        }
+        case 'resumeDebug': {
+            paused = false;
+            if (runner) {
+                runner.setTraceOnlyMode(true);
+                runner.startForExternalLoop();
+                startLoop();
             }
             break;
         }
@@ -132,7 +142,7 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
                 const count = Math.max(1, Math.min(100, msg.count ?? 1));
                 if (client) {
                     for (let i = 0; i < count; i++) {
-                        runner.injectSingleRequest(client.id);
+                        runner.injectSingleRequest(client.id, msg.method, msg.payloadSize, msg.path);
                     }
                     runner.stepOnce(1, true);
                 }
@@ -145,15 +155,15 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
                 stepInProgress = true;
                 const client = lastNodes.find((n) => n.type === 'client');
                 const count = Math.max(1, Math.min(20, msg.count ?? 1));
-                const SPACING_MS = 250; // Time between injects so requests follow behind each other
+                const SPACING_MS = 250;
                 if (client) {
                     for (let i = 0; i < count; i++) {
-                        runner.injectSingleRequest(client.id);
+                        runner.injectSingleRequest(client.id, msg.method, msg.payloadSize, msg.path);
                         if (i < count - 1) runner.stepFor(SPACING_MS);
                     }
                 }
                 stepInProgress = false;
-                // Start the loop so particles continue flowing; suppress client spawn (trace-only)
+                paused = false;
                 runner.setTraceOnlyMode(true);
                 runner.startForExternalLoop();
                 self.postMessage({ type: 'injectSequentialDone' });
