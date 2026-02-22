@@ -16,6 +16,7 @@ type InMessage =
     | { type: 'pause' }
     | { type: 'step' }
     | { type: 'injectRequest'; count?: number }
+    | { type: 'injectSequential'; count?: number }
     | { type: 'setSpeed'; value: number }
     | { type: 'setLoadFactor'; value: number }
     | { type: 'updateNodes'; nodes: CanvasNode[] };
@@ -97,7 +98,10 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
         case 'pause': {
             paused = true;
             stopLoop(); // Stop interval first so no further step() runs
-            if (runner) runner.pause();
+            if (runner) {
+                runner.setTraceOnlyMode(false);
+                runner.pause();
+            }
             break;
         }
         case 'setSpeed': {
@@ -133,6 +137,27 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
                     runner.stepOnce(1, true);
                 }
                 stepInProgress = false;
+            }
+            break;
+        }
+        case 'injectSequential': {
+            if (runner) {
+                stepInProgress = true;
+                const client = lastNodes.find((n) => n.type === 'client');
+                const count = Math.max(1, Math.min(20, msg.count ?? 1));
+                const SPACING_MS = 250; // Time between injects so requests follow behind each other
+                if (client) {
+                    for (let i = 0; i < count; i++) {
+                        runner.injectSingleRequest(client.id);
+                        if (i < count - 1) runner.stepFor(SPACING_MS);
+                    }
+                }
+                stepInProgress = false;
+                // Start the loop so particles continue flowing; suppress client spawn (trace-only)
+                runner.setTraceOnlyMode(true);
+                runner.startForExternalLoop();
+                self.postMessage({ type: 'injectSequentialDone' });
+                startLoop();
             }
             break;
         }

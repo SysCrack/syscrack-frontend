@@ -26,6 +26,7 @@ export default function SimulationControls() {
         resumeSimulation,
         stepSimulation,
         injectRequest,
+        injectSequential,
         reset,
         selectScenario,
         setSpeed,
@@ -102,8 +103,11 @@ export default function SimulationControls() {
                             </option>
                         ))}
                     </select>
-                    <button onClick={() => injectRequest(injectCount)} style={btnStyle('#06b6d4')} title="Inject N requests at first client">
+                    <button onClick={() => injectRequest(injectCount)} style={btnStyle('#06b6d4')} title="Inject N requests at first client (burst)">
                         Inject
+                    </button>
+                    <button onClick={() => injectSequential(injectCount)} style={btnStyle('#0891b2')} title="Inject N requests spaced out, each follows behind the previous">
+                        Inject Seq
                     </button>
                     <button onClick={resumeSimulation} style={btnStyle('#22c55e')}>
                         ▶ Resume

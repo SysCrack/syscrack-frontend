@@ -226,6 +226,7 @@ export class SimulationRunner {
     private onTraceComplete?: (trace: RequestTrace) => void;
     private _suppressClientSpawning = false;
     private _tracedArrivalThisStep = false;
+    private _traceOnlyMode = false;
 
     speed = 1.0;
     loadFactor = 1.0;
@@ -412,6 +413,42 @@ export class SimulationRunner {
         this.running = wasRunning;
     }
 
+    /**
+     * Advance simulation until all traced particles complete (reach leaves).
+     * Used for step-through debugging when you want one request fully done before the next.
+     */
+    stepUntilTracedRequestCompletes(): void {
+        const hasTracedParticle = () => this.particles.some((p) => p.traceId);
+        if (!hasTracedParticle()) return;
+        const MAX_ITERATIONS = 500; // safety cap for deep topologies
+        const wasRunning = this.running;
+        this.running = true;
+        this._suppressClientSpawning = true;
+        for (let i = 0; i < MAX_ITERATIONS; i++) {
+            this.step(1000 / 60);
+            if (!hasTracedParticle()) break;
+        }
+        this._suppressClientSpawning = false;
+        this.running = wasRunning;
+    }
+
+    /** Advance simulation by a fixed duration (ms). Used for "follow behind" inject spacing. */
+    stepFor(ms: number): void {
+        const frameMs = 1000 / 60;
+        let elapsed = 0;
+        const target = Math.max(0, ms);
+        const wasRunning = this.running;
+        this.running = true;
+        this._suppressClientSpawning = true;
+        while (elapsed < target) {
+            const dt = Math.min(frameMs, target - elapsed);
+            this.step(dt);
+            elapsed += dt;
+        }
+        this._suppressClientSpawning = false;
+        this.running = wasRunning;
+    }
+
     /** Inject a single request at the given client node; returns traceId for step-through debug */
     injectSingleRequest(clientNodeId: string): string {
         const node = this.nodeMap.get(clientNodeId);
@@ -450,6 +487,7 @@ export class SimulationRunner {
 
     setSpeed(s: number) { this.speed = Math.max(0.25, Math.min(4, s)); }
     setLoadFactor(f: number) { this.loadFactor = Math.max(0.1, Math.min(5, f)); }
+    setTraceOnlyMode(v: boolean) { this._traceOnlyMode = v; }
 
     get isRunning() { return this.running; }
 
@@ -534,8 +572,8 @@ export class SimulationRunner {
             this.rpsAccumulator = 0;
         }
 
-        // 4. Continuous client spawning (skipped in debug/step mode)
-        if (!this._suppressClientSpawning) {
+        // 4. Continuous client spawning (skipped in debug/step mode or trace-only mode)
+        if (!this._suppressClientSpawning && !this._traceOnlyMode) {
             for (const node of this.nodes) {
                 if (node.type !== 'client') continue;
 
