@@ -23,6 +23,7 @@ import {
     LoadBalancerModel,
     APIGatewayModel,
     AppServerModel,
+    ProxyModel,
     CacheModel,
     DatabaseSQLModel,
     DatabaseNoSQLModel,
@@ -38,6 +39,7 @@ const MODEL_FACTORIES: Partial<Record<CanvasComponentType, new (node: CanvasNode
     load_balancer: LoadBalancerModel,
     api_gateway: APIGatewayModel,
     app_server: AppServerModel,
+    proxy: ProxyModel,
     cache: CacheModel,
     database_sql: DatabaseSQLModel,
     database_nosql: DatabaseNoSQLModel,
@@ -65,6 +67,7 @@ class GenericModel extends ComponentModel {
 
 const FLOW_PRIORITY: Partial<Record<CanvasComponentType, number>> = {
     cache: 1,
+    proxy: 1.5,
     database_sql: 2,
     database_nosql: 2,
     message_queue: 3,
@@ -336,7 +339,7 @@ export class SimulationEngine {
 
                     const nodeType = this.nodeTypes.get(nodeId)!;
 
-                    if (nodeType === 'load_balancer') {
+                    if (nodeType === 'load_balancer' || nodeType === 'proxy') {
                         this.distributeLBLoad(nodeId, inputQps, sorted, nodeLoads, history);
                     } else if (nodeType === 'cache' || nodeType === 'cdn') {
                         // Cache/CDN reduces via hit rate
@@ -487,6 +490,7 @@ export class SimulationEngine {
                 load_balancer: 25,
                 api_gateway: 35,
                 app_server: 80,
+                proxy: 30,
                 cache: 60,
                 database_sql: 150,
                 database_nosql: 100,

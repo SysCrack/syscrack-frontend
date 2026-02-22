@@ -212,6 +212,8 @@ export class SimulationRunner {
 
     // LB: requests sent per backend (nodeId -> targetId -> count)
     private lbSentRequests: Map<string, Map<string, number>> = new Map();
+    // Proxy: requests sent per backend (nodeId -> targetId -> count) — separate from LB to avoid naming confusion
+    private proxySentRequests: Map<string, Map<string, number>> = new Map();
 
     // Message queue: enqueued, processed, dead-lettered per node
     private mqEnqueued: Map<string, number> = new Map();
@@ -289,6 +291,9 @@ export class SimulationRunner {
             if (node.type === 'load_balancer') {
                 this.lbSentRequests.set(node.id, new Map());
             }
+            if (node.type === 'proxy') {
+                this.proxySentRequests.set(node.id, new Map());
+            }
             if (node.type === 'message_queue') {
                 this.mqEnqueued.set(node.id, 0);
                 this.mqProcessed.set(node.id, 0);
@@ -345,6 +350,7 @@ export class SimulationRunner {
         this.cacheMisses.clear();
         this.cacheSimulators.clear();
         this.lbSentRequests.clear();
+        this.proxySentRequests.clear();
         this.mqEnqueued.clear();
         this.mqProcessed.clear();
         this.mqDeadLettered.clear();
@@ -374,6 +380,9 @@ export class SimulationRunner {
             }
             if (node.type === 'load_balancer') {
                 this.lbSentRequests.set(node.id, new Map());
+            }
+            if (node.type === 'proxy') {
+                this.proxySentRequests.set(node.id, new Map());
             }
             if (node.type === 'message_queue') {
                 this.mqEnqueued.set(node.id, 0);
@@ -690,6 +699,8 @@ export class SimulationRunner {
 
         if (nodeType === 'load_balancer') {
             this.spawnFromLB(node, outConns, count, traceId, parentParticle);
+        } else if (nodeType === 'proxy') {
+            this.spawnFromProxy(node, outConns, count, traceId, parentParticle);
         } else if (nodeType === 'cache' || nodeType === 'cdn') {
             this.spawnFromCache(node, outConns, count, traceId, parentParticle);
         } else if (nodeType === 'api_gateway') {
@@ -840,6 +851,61 @@ export class SimulationRunner {
             const targetName = this.nodeMap.get(chosenConn.targetId)?.name ?? chosenConn.targetId;
             const methodStr = pp?.method ? ` ${pp.method}` : '';
             this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed${methodStr} to ${targetName} (${algo})`, timestamp: this.tick, method: pp?.method, readWrite: pp?.readWrite });
+        }
+    }
+
+    private spawnFromProxy(node: CanvasNode, outConns: CanvasConnection[], count: number, traceId?: string, pp?: RequestParticle) {
+        const algo = (node.specificConfig as Record<string, unknown>).algorithm as string || 'round-robin';
+
+        if (outConns.length === 0) return;
+
+        const recordSent = (targetId: string, n: number) => {
+            const m = this.proxySentRequests.get(node.id)!;
+            m.set(targetId, (m.get(targetId) ?? 0) + n);
+        };
+
+        let chosenConn: CanvasConnection;
+
+        switch (algo) {
+            case 'round-robin': {
+                const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
+                this.rrCounters.set(node.id, idx + 1);
+                chosenConn = outConns[idx];
+                break;
+            }
+            case 'least-connections': {
+                let minConn = outConns[0];
+                let minCount = Infinity;
+                for (const conn of outConns) {
+                    const active = this.nodeActiveCount.get(conn.targetId) ?? 0;
+                    if (active < minCount) {
+                        minCount = active;
+                        minConn = conn;
+                    }
+                }
+                chosenConn = minConn;
+                break;
+            }
+            case 'random': {
+                const idx = Math.floor(Math.random() * outConns.length);
+                chosenConn = outConns[idx];
+                break;
+            }
+            default: {
+                const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
+                this.rrCounters.set(node.id, idx + 1);
+                chosenConn = outConns[idx];
+                break;
+            }
+        }
+
+        this.emitParticle(chosenConn, count, undefined, traceId, pp);
+        recordSent(chosenConn.targetId, count);
+
+        if (traceId) {
+            const targetName = this.nodeMap.get(chosenConn.targetId)?.name ?? chosenConn.targetId;
+            const methodStr = pp?.method ? ` ${pp.method}` : '';
+            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed via proxy to ${targetName} (${algo})`, timestamp: this.tick, method: pp?.method, readWrite: pp?.readWrite });
         }
     }
 
@@ -1058,6 +1124,18 @@ export class SimulationRunner {
             }
         }
 
+        // Connection pooling: when particle came from a proxy with connectionPooling enabled,
+        // reduce downstream hop latency by ~20% (reused connections avoid handshake overhead)
+        if (conn) {
+            const sourceNode = this.nodeMap.get(conn.sourceId);
+            if (sourceNode?.type === 'proxy') {
+                const sc = (sourceNode.specificConfig as Record<string, unknown>);
+                if (sc?.connectionPooling === true) {
+                    latency *= 0.8;
+                }
+            }
+        }
+
         this.nodeLatencySum.set(
             particle.targetId,
             (this.nodeLatencySum.get(particle.targetId) ?? 0) + latency * particle.count,
@@ -1183,6 +1261,7 @@ export class SimulationRunner {
             client: 0,
             cdn: 2,
             load_balancer: 1,
+            proxy: 1,
             api_gateway: 5,
             app_server: 15,
             cache: 2,
@@ -1289,6 +1368,26 @@ export class SimulationRunner {
                     detail.componentDetail = {
                         kind: 'load_balancer',
                         algorithm: (c.algorithm as string) ?? 'round-robin',
+                        backends,
+                    };
+                    break;
+                }
+                case 'proxy': {
+                    const sentMap = this.proxySentRequests.get(node.id);
+                    const backends = (this.adjacency.get(node.id) ?? []).map((targetId) => {
+                        const targetNode = this.nodeMap.get(targetId);
+                        return {
+                            nodeId: targetId,
+                            name: targetNode?.name ?? targetId,
+                            sentRequests: sentMap?.get(targetId) ?? 0,
+                            activeConnections: this.nodeActiveCount.get(targetId) ?? 0,
+                        };
+                    });
+                    detail.componentDetail = {
+                        kind: 'proxy',
+                        algorithm: (c.algorithm as string) ?? 'round-robin',
+                        connectionPooling: (c.connectionPooling as boolean) ?? true,
+                        maxConnections: (c.maxConnections as number) ?? 500,
                         backends,
                     };
                     break;

@@ -5,7 +5,10 @@
 'use client';
 
 import { useState } from 'react';
+import { toast } from 'sonner';
+import { useCanvasStore } from '@/stores/canvasStore';
 import { useCanvasSimulationStore, useCurrentResult } from '@/stores/canvasSimulationStore';
+import { getTopologyWarnings } from '@/lib/connectionRules';
 import type { RequestMethod, PayloadSize } from '@/lib/simulation/types';
 
 const font = 'Inter, system-ui, sans-serif';

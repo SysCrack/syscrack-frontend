@@ -5,6 +5,7 @@
  * between component types and validates at draw time.
  */
 import type { CanvasComponentType, ConnectionProtocol } from '@/lib/types/canvas';
+import type { CanvasNode, CanvasConnection } from '@/lib/types/canvas';
 
 // Valid downstream targets for each source type (frontend types)
 const VALID_DOWNSTREAM: Partial<Record<CanvasComponentType, CanvasComponentType[]>> = {
@@ -12,11 +13,12 @@ const VALID_DOWNSTREAM: Partial<Record<CanvasComponentType, CanvasComponentType[
     cdn: ['load_balancer', 'app_server', 'object_store'],
     load_balancer: ['app_server'],
     api_gateway: ['app_server'],
-    app_server: ['cache', 'database_sql', 'database_nosql', 'message_queue', 'app_server', 'object_store'],
+    app_server: ['cache', 'database_sql', 'database_nosql', 'message_queue', 'app_server', 'object_store', 'proxy'],
     cache: ['database_sql', 'database_nosql', 'cache'],
     database_sql: ['database_sql', 'database_nosql'],
     database_nosql: ['database_sql', 'database_nosql'],
     message_queue: ['app_server'],
+    proxy: ['database_sql', 'database_nosql', 'cache', 'object_store', 'message_queue'],
     object_store: [], // Terminal node
 };
 
@@ -57,6 +59,27 @@ export function validateConnection(
         message: `${sourceType} should not connect directly to ${targetType}`,
         suggestion: `Valid targets: ${validTargets.join(', ')}`,
     };
+}
+
+/**
+ * Return topology-level validation warnings (e.g. dangling proxy).
+ * Call with nodes and connections to get warnings to display to the user.
+ */
+export function getTopologyWarnings(
+    nodes: CanvasNode[],
+    connections: CanvasConnection[],
+): string[] {
+    const warnings: string[] = [];
+    const outboundBySource = new Map<string, number>();
+    for (const c of connections) {
+        outboundBySource.set(c.sourceId, (outboundBySource.get(c.sourceId) ?? 0) + 1);
+    }
+    for (const node of nodes) {
+        if (node.type === 'proxy' && (outboundBySource.get(node.id) ?? 0) === 0) {
+            warnings.push(`Proxy "${node.name}" has no downstream connections — requests will be dropped.`);
+        }
+    }
+    return warnings;
 }
 
 // ── Protocol Factors (simulation impact) ─────────────────────────────────────

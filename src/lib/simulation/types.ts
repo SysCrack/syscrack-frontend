@@ -80,6 +80,7 @@ export type ComponentDetailData =
     | { kind: 'cache'; hitRate: number; hits: number; misses: number; entries: CacheEntry[]; evictionPolicy: string; readStrategy: string; writeStrategy: string; ttl: number; maxEntries: number }
     | { kind: 'cdn'; hitRate: number; hits: number; misses: number; edgeLocations: number; ttl: number }
     | { kind: 'load_balancer'; algorithm: string; backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[] }
+    | { kind: 'proxy'; algorithm: string; connectionPooling: boolean; maxConnections: number; backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[] }
     | { kind: 'app_server'; activeInstances: number; maxInstances: number; autoScaling: boolean; instanceType: string }
     | { kind: 'database_sql'; engine: string; readCapacity: number; writeCapacity: number; readReplicas: number; connectionPooling: boolean; activeConnections: number }
     | { kind: 'database_nosql'; engine: string; consistencyLevel: string; capacity: number; utilization: number }

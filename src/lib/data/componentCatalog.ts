@@ -89,6 +89,22 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
         defaultSpecificConfig: { instanceType: 'medium', autoScaling: true, minInstances: 1, maxInstances: 10 },
         applicableLayers: { scaling: true, consistency: false, resilience: true, trafficControl: false, sharding: false },
     },
+    {
+        type: 'proxy',
+        label: 'Proxy',
+        icon: '🔀',
+        category: 'compute',
+        priority: 'p1',
+        description: 'Data-layer proxy — connection pooling, routing, failover for backends',
+        defaultSharedConfig: { ...withScaling(1, 8000), resilience: { circuitBreaker: false, automaticRetries: false } },
+        defaultSpecificConfig: {
+            algorithm: 'round-robin',
+            connectionPooling: true,
+            maxConnections: 500,
+            healthCheckInterval: 10,
+        },
+        applicableLayers: { scaling: true, consistency: false, resilience: true, trafficControl: false, sharding: false },
+    },
 
     // ── Storage ───────────────────────────────────
     {

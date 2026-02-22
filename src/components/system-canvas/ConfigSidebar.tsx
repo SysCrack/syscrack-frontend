@@ -13,6 +13,9 @@ const SPECIFIC_CONFIG_ENUMS: Partial<Record<string, Record<string, string[]>>> =
     load_balancer: {
         algorithm: ['round-robin', 'least-connections', 'random', 'weighted'],
     },
+    proxy: {
+        algorithm: ['round-robin', 'least-connections', 'random'],
+    },
     cache: {
         readStrategy: ['cache-aside', 'read-through'],
         writeStrategy: ['write-through', 'write-behind', 'write-around'],

@@ -135,6 +135,27 @@ function LoadBalancerDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'lo
     );
 }
 
+function ProxyDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'proxy' }> }) {
+    return (
+        <>
+            <Section title="Config">
+                <Row label="Algorithm" value={d.algorithm} />
+                <Row label="Connection pooling" value={d.connectionPooling ? 'On' : 'Off'} />
+                <Row label="Max connections" value={d.maxConnections} />
+            </Section>
+            <Section title="Backends">
+                {d.backends.map((b) => (
+                    <div key={b.nodeId} style={{ padding: '6px 0', borderBottom: '1px solid #2a3244' }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0' }}>{b.name}</div>
+                        <Row label="Sent requests" value={Math.round(b.sentRequests)} />
+                        <Row label="Active connections" value={b.activeConnections} />
+                    </div>
+                ))}
+            </Section>
+        </>
+    );
+}
+
 function AppServerDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'app_server' }> }) {
     return (
         <Section title="Config">
@@ -310,6 +331,7 @@ export default function LiveComponentInspector({ nodeId }: LiveComponentInspecto
                     {detail.componentDetail.kind === 'cache' && <CacheDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'cdn' && <CDNDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'load_balancer' && <LoadBalancerDetail d={detail.componentDetail} />}
+                    {detail.componentDetail.kind === 'proxy' && <ProxyDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'app_server' && <AppServerDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'database_sql' && <DatabaseSQLDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'database_nosql' && <DatabaseNoSQLDetail d={detail.componentDetail} />}

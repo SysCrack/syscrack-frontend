@@ -24,6 +24,7 @@ export type CanvasComponentType =
     | 'dns'
     // Compute
     | 'app_server'
+    | 'proxy'
     | 'worker'
     | 'serverless'
     | 'auth_service'
