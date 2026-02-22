@@ -14,6 +14,7 @@
  *   - DB/Queue/Store: absorbs (leaf node)
  */
 import type { CanvasNode, CanvasConnection, CanvasComponentType } from '@/lib/types/canvas';
+import { PROTOCOL_FACTORS } from '@/lib/connectionRules';
 import type { NodeSimSummary, NodeDetailMetrics, CacheEntry, RequestTraceEvent, RequestTrace } from './types';
 
 // ── Cache entry simulator (bounded entries, eviction by policy) ──
@@ -217,6 +218,7 @@ export class SimulationRunner {
     private adjacency: Map<string, string[]> = new Map();        // nodeId → [targetNodeId]
     private connectionMap: Map<string, CanvasConnection> = new Map(); // connId → conn
     private connectionsBySource: Map<string, CanvasConnection[]> = new Map(); // nodeId → outbound conns
+    private connectionsByTarget: Map<string, CanvasConnection[]> = new Map(); // nodeId → inbound conns
     private nodeMap: Map<string, CanvasNode> = new Map();
 
     // Step-through debug: active traces (traceId -> events)
@@ -252,6 +254,7 @@ export class SimulationRunner {
             this.nodeMap.set(node.id, node);
             this.adjacency.set(node.id, []);
             this.connectionsBySource.set(node.id, []);
+            this.connectionsByTarget.set(node.id, []);
             this.nodeActiveCount.set(node.id, 0);
             this.nodeRecentArrivals.set(node.id, 0);
             this.nodeRpsEma.set(node.id, 0);
@@ -289,6 +292,7 @@ export class SimulationRunner {
             this.connectionMap.set(conn.id, conn);
             this.adjacency.get(conn.sourceId)?.push(conn.targetId);
             this.connectionsBySource.get(conn.sourceId)?.push(conn);
+            this.connectionsByTarget.get(conn.targetId)?.push(conn);
         }
     }
 
@@ -811,6 +815,18 @@ export class SimulationRunner {
         const targetNode = this.nodeMap.get(particle.targetId);
         if (!targetNode) return;
 
+        const conn = this.connectionMap.get(particle.connectionId);
+        const lossRate = conn ? (PROTOCOL_FACTORS[conn.protocol]?.packetLossRate ?? 0) : 0;
+        if (lossRate > 0 && Math.random() < lossRate) {
+            this.nodeErrorCount.set(
+                particle.targetId,
+                (this.nodeErrorCount.get(particle.targetId) ?? 0) + particle.count,
+            );
+            const prev = this.nodeActiveCount.get(particle.targetId) ?? 0;
+            this.nodeActiveCount.set(particle.targetId, Math.max(0, prev - 1));
+            return;
+        }
+
         // Decrement active count
         const prev = this.nodeActiveCount.get(particle.targetId) ?? 0;
         this.nodeActiveCount.set(particle.targetId, Math.max(0, prev - 1));
@@ -839,8 +855,9 @@ export class SimulationRunner {
             );
         }
 
-        // Add latency
-        const latency = this.getNodeLatency(targetNode, currentLoadRps, capacity);
+        // Add latency (node processing + protocol overhead)
+        const protocolOverhead = conn ? (PROTOCOL_FACTORS[conn.protocol]?.overheadMs ?? 0) : 0;
+        const latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
         this.nodeLatencySum.set(
             particle.targetId,
             (this.nodeLatencySum.get(particle.targetId) ?? 0) + latency * particle.count,
@@ -922,7 +939,15 @@ export class SimulationRunner {
     private getNodeCapacity(node: CanvasNode): number {
         const instances = node.sharedConfig.scaling?.instances ?? 1;
         const rps = node.sharedConfig.scaling?.nodeCapacityRps ?? 1000;
-        return instances * rps;
+        const incomingConns = this.connectionsByTarget.get(node.id) ?? [];
+        const avgMultiplier =
+            incomingConns.length > 0
+                ? incomingConns.reduce(
+                      (sum, c) => sum + (PROTOCOL_FACTORS[c.protocol]?.capacityMultiplier ?? 1),
+                      0,
+                  ) / incomingConns.length
+                : 1;
+        return instances * rps * avgMultiplier;
     }
 
     private getNodeLatency(node: CanvasNode, load: number, capacity: number): number {

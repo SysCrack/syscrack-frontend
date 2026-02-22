@@ -40,7 +40,7 @@ interface CanvasSimulationStore {
     pauseSimulation: () => void;
     resumeSimulation: () => void;
     stepSimulation: () => void;
-    injectRequest: () => void;
+    injectRequest: (count?: number) => void;
     reset: () => void;
     selectScenario: (idx: number) => void;
     setSpeed: (s: number) => void;
@@ -185,8 +185,8 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
         get()._worker?.postMessage({ type: 'step' });
     },
 
-    injectRequest: () => {
-        get()._worker?.postMessage({ type: 'injectRequest' });
+    injectRequest: (count = 1) => {
+        get()._worker?.postMessage({ type: 'injectRequest', count });
     },
 
     resumeSimulation: () => {

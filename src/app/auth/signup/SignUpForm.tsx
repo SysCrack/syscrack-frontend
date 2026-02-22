@@ -24,7 +24,7 @@ export function SignUpForm() {
   // Redirect if already logged in
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace("/problems");
+      router.replace("/");
     }
   }, [user, authLoading, router]);
 

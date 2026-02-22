@@ -20,9 +20,7 @@ export function TopNav() {
     setMounted(true);
   }, []);
 
-  const navLinks = [
-    { href: "/problems", label: "Problems" },
-  ];
+  const navLinks: { href: string; label: string }[] = [];
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-[var(--color-border)] bg-[var(--color-canvas-bg)]/95 backdrop-blur supports-[backdrop-filter]:bg-[var(--color-canvas-bg)]/80">

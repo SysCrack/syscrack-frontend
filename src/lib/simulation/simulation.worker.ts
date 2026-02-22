@@ -15,7 +15,7 @@ type InMessage =
     | { type: 'start' }
     | { type: 'pause' }
     | { type: 'step' }
-    | { type: 'injectRequest' }
+    | { type: 'injectRequest'; count?: number }
     | { type: 'setSpeed'; value: number }
     | { type: 'setLoadFactor'; value: number }
     | { type: 'updateNodes'; nodes: CanvasNode[] };
@@ -125,8 +125,11 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
             if (runner) {
                 stepInProgress = true;
                 const client = lastNodes.find((n) => n.type === 'client');
+                const count = Math.max(1, Math.min(100, msg.count ?? 1));
                 if (client) {
-                    runner.injectSingleRequest(client.id);
+                    for (let i = 0; i < count; i++) {
+                        runner.injectSingleRequest(client.id);
+                    }
                     runner.stepOnce(1, true);
                 }
                 stepInProgress = false;

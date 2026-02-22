@@ -108,7 +108,7 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
 
   // Handle next problem (placeholder for now)
   const handleNextProblem = useCallback(() => {
-    router.push("/problems");
+    router.push("/");
   }, [router]);
 
   // Show loading while auth is initializing
@@ -138,8 +138,8 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
               You need to sign in to view problem details and submit solutions.
             </p>
             <div className="flex gap-4 justify-center">
-              <Button variant="outline" onClick={() => router.push("/problems")}>
-                Back to Problems
+              <Button variant="outline" onClick={() => router.push("/")}>
+                Back to Home
               </Button>
               <Button onClick={() => router.push("/auth/login")}>
                 Sign In
@@ -178,8 +178,8 @@ export function ProblemDetailPage({ params }: ProblemDetailPageProps) {
                 ? "This problem is only available to premium users."
                 : "The problem you're looking for doesn't exist."}
             </p>
-            <Button variant="outline" onClick={() => router.push("/problems")}>
-              Back to Problems
+            <Button variant="outline" onClick={() => router.push("/")}>
+              Back to Home
             </Button>
           </div>
         </main>

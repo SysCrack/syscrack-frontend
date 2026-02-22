@@ -246,10 +246,10 @@ export default function DesignPage() {
                 <div className="text-xl font-semibold mb-2 text-red-500">Error Loading Problem</div>
                 <p>{error}</p>
                 <Link
-                    href="/problems"
+                    href="/"
                     className="mt-4 px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)]"
                 >
-                    Back to Problems
+                    Back to Home
                 </Link>
             </div>
         );
@@ -261,10 +261,10 @@ export default function DesignPage() {
                 <div className="text-xl font-semibold mb-2">Problem Not Found</div>
                 <p>Could not find problem with ID: {problemId}</p>
                 <Link
-                    href="/problems"
+                    href="/"
                     className="mt-4 px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)]"
                 >
-                    Back to Problems
+                    Back to Home
                 </Link>
             </div>
         );

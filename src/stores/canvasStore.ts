@@ -18,6 +18,7 @@ import type {
 } from '@/lib/types/canvas';
 import { createNode, createConnection } from '@/lib/types/canvas';
 import { getCatalogEntry } from '@/lib/data/componentCatalog';
+import { validateConnection, getDefaultProtocol } from '@/lib/connectionRules';
 
 // ============ Interaction Modes ============
 
@@ -38,6 +39,7 @@ interface CanvasStore {
     // Connection drawing state
     connectingFrom: string | null;
     connectingToPoint: { x: number; y: number } | null;
+    connectionValidationError: string | null;
 
     // ── Node Actions ──
     addNode: (type: CanvasComponentType, x: number, y: number) => CanvasNode | null;
@@ -93,6 +95,7 @@ export const useCanvasStore = create<CanvasStore>()(
         isDirty: false,
         connectingFrom: null,
         connectingToPoint: null,
+        connectionValidationError: null,
 
         // ── Node Actions ──
 
@@ -247,6 +250,7 @@ export const useCanvasStore = create<CanvasStore>()(
         startConnecting: (nodeId) =>
             set((s) => {
                 s.connectingFrom = nodeId;
+                s.connectionValidationError = null;
                 s.mode = 'connect';
             }),
 
@@ -256,10 +260,33 @@ export const useCanvasStore = create<CanvasStore>()(
             }),
 
         finishConnecting: (targetNodeId) => {
-            const { connectingFrom, addConnection } = get();
-            if (connectingFrom && connectingFrom !== targetNodeId) {
-                addConnection(connectingFrom, targetNodeId);
+            const { connectingFrom, nodes, addConnection } = get();
+            if (!connectingFrom || connectingFrom === targetNodeId) {
+                set((s) => {
+                    s.connectingFrom = null;
+                    s.connectingToPoint = null;
+                    s.mode = 'select';
+                    s.connectionValidationError = null;
+                });
+                return;
             }
+            const source = nodes.find((n) => n.id === connectingFrom);
+            const target = nodes.find((n) => n.id === targetNodeId);
+            if (source && target) {
+                const result = validateConnection(source.type, target.type);
+                if (!result.valid) {
+                    set((s) => {
+                        s.connectionValidationError = `${result.message}. ${result.suggestion ?? ''}`;
+                    });
+                    return;
+                }
+            }
+            set((s) => {
+                s.connectionValidationError = null;
+            });
+            const protocol =
+                source && target ? getDefaultProtocol(source.type, target.type) : 'http';
+            addConnection(connectingFrom, targetNodeId, protocol);
             set((s) => {
                 s.connectingFrom = null;
                 s.connectingToPoint = null;
@@ -271,6 +298,7 @@ export const useCanvasStore = create<CanvasStore>()(
             set((s) => {
                 s.connectingFrom = null;
                 s.connectingToPoint = null;
+                s.connectionValidationError = null;
                 s.mode = 'select';
             }),
 

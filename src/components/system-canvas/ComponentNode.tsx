@@ -9,7 +9,8 @@
 import { Group, Rect, Text, Circle } from 'react-konva';
 import { useRef, useState, useCallback } from 'react';
 import type Konva from 'konva';
-import type { CanvasNode } from '@/lib/types/canvas';
+import type { CanvasNode, CanvasComponentType } from '@/lib/types/canvas';
+import { validateConnection } from '@/lib/connectionRules';
 import type { NodeSimSummary } from '@/lib/simulation/types';
 import { getCatalogEntry } from '@/lib/data/componentCatalog';
 
@@ -45,6 +46,12 @@ interface ComponentNodeProps {
     onDragEnd: (id: string, x: number, y: number) => void;
     onPortClick: (nodeId: string) => void;
     isConnecting: boolean;
+    /** When connecting, the type of the source node (for validation) */
+    connectingSourceType?: CanvasComponentType;
+    /** When connecting, the source node id (don't connect to self) */
+    connectingSourceNodeId?: string;
+    /** Callback when port hover changes (for invalid target tooltip) */
+    onPortHoverChange?: (message: string | null) => void;
     // Simulation overlay data (undefined = no simulation active)
     simState?: NodeSimSummary;
     isSpof?: boolean;
@@ -61,6 +68,9 @@ export default function ComponentNode({
     onDragEnd,
     onPortClick,
     isConnecting,
+    connectingSourceType,
+    connectingSourceNodeId,
+    onPortHoverChange,
     simState,
     isSpof,
     onDiagnosticClick,
@@ -133,13 +143,27 @@ export default function ComponentNode({
         [node.id, onDragEnd],
     );
 
-    const handlePortEnter = useCallback((portId: string) => {
-        setHoveredPort(portId);
-    }, []);
+    const isValidConnectionTarget =
+        !(isConnecting && node.id === connectingSourceNodeId) &&
+        (!isConnecting ||
+            !connectingSourceType ||
+            validateConnection(connectingSourceType, node.type).valid);
+
+    const handlePortEnter = useCallback(
+        (portId: string) => {
+            setHoveredPort(portId);
+            if (onPortHoverChange && !isValidConnectionTarget) {
+                const result = validateConnection(connectingSourceType!, node.type);
+                onPortHoverChange(`${result.message}. ${result.suggestion ?? ''}`);
+            }
+        },
+        [onPortHoverChange, isValidConnectionTarget, connectingSourceType, node.type],
+    );
 
     const handlePortLeave = useCallback(() => {
         setHoveredPort(null);
-    }, []);
+        onPortHoverChange?.(null);
+    }, [onPortHoverChange]);
 
     const handlePortClick = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -344,21 +368,33 @@ export default function ComponentNode({
 
             {/* Ports — visible on hover or when connecting */}
             {(isHovered || isConnecting) &&
-                ports.map((port) => (
-                    <Circle
-                        key={port.id}
-                        x={port.x}
-                        y={port.y}
-                        radius={hoveredPort === port.id ? PORT_RADIUS + 2 : PORT_RADIUS}
-                        fill={hoveredPort === port.id ? PORT_HOVER_COLOR : PORT_COLOR}
-                        stroke="#1e293b"
-                        strokeWidth={2}
-                        onMouseEnter={() => handlePortEnter(port.id)}
-                        onMouseLeave={handlePortLeave}
-                        onClick={handlePortClick}
-                        onTap={handlePortTap}
-                    />
-                ))}
+                ports.map((port) => {
+                    const isInvalidTarget = isConnecting && !isValidConnectionTarget;
+                    return (
+                        <Circle
+                            key={port.id}
+                            x={port.x}
+                            y={port.y}
+                            radius={hoveredPort === port.id ? PORT_RADIUS + 2 : PORT_RADIUS}
+                            fill={
+                                isInvalidTarget
+                                    ? hoveredPort === port.id
+                                        ? '#f87171'
+                                        : '#64748b'
+                                    : hoveredPort === port.id
+                                        ? PORT_HOVER_COLOR
+                                        : PORT_COLOR
+                            }
+                            opacity={isInvalidTarget ? 0.8 : 1}
+                            stroke="#1e293b"
+                            strokeWidth={2}
+                            onMouseEnter={() => handlePortEnter(port.id)}
+                            onMouseLeave={handlePortLeave}
+                            onClick={handlePortClick}
+                            onTap={handlePortTap}
+                        />
+                    );
+                })}
         </Group>
     );
 }
