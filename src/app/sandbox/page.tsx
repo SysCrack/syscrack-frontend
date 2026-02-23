@@ -87,7 +87,7 @@ function SandboxTitleBar() {
 
 /**
  * Right panel logic:
- * - If simulation active AND one node selected → LiveComponentInspector (metrics win over traces)
+ * - If simulation active AND one node selected → LiveComponentInspector (metrics)
  * - If traceHistory has traces (step-through debug) → RequestTracePanel (collapsible)
  * - If simulation active → SimulationResults (collapsible)
  * - If simulation idle AND one node selected → ConfigSidebar

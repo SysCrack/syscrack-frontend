@@ -10,11 +10,11 @@ import type { CanvasNode, CanvasConnection } from '@/lib/types/canvas';
 // Valid downstream targets for each source type (frontend types)
 const VALID_DOWNSTREAM: Partial<Record<CanvasComponentType, CanvasComponentType[]>> = {
     client: ['cdn', 'load_balancer', 'api_gateway', 'app_server'],
-    cdn: ['load_balancer', 'app_server', 'object_store'],
+    cdn: ['load_balancer', 'app_server', 'object_store', 'cache'],
     load_balancer: ['app_server'],
     api_gateway: ['app_server'],
     app_server: ['cache', 'database_sql', 'database_nosql', 'message_queue', 'app_server', 'object_store', 'proxy'],
-    cache: ['database_sql', 'database_nosql', 'cache'],
+    cache: ['database_sql', 'database_nosql', 'cache', 'object_store', 'load_balancer', 'app_server'],
     database_sql: ['database_sql', 'database_nosql'],
     database_nosql: ['database_sql', 'database_nosql'],
     message_queue: ['app_server'],

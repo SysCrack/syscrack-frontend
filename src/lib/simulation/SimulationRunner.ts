@@ -258,7 +258,6 @@ export class SimulationRunner {
     /** Update node configurations dynamically (e.g., when instances are changed during simulation) */
     updateNodes(nodes: CanvasNode[]) {
         this.nodes = nodes;
-        // Rebuild node map with updated configs
         for (const node of nodes) {
             this.nodeMap.set(node.id, node);
         }
@@ -693,7 +692,22 @@ export class SimulationRunner {
 
     private spawnFromNode(nodeId: string, count: number, traceId?: string, parentParticle?: RequestParticle, readWriteOverride?: ReadWrite) {
         const outConns = this.connectionsBySource.get(nodeId) ?? [];
-        if (outConns.length === 0) return;
+        if (outConns.length === 0) {
+            if (traceId) {
+                const node = this.nodeMap.get(nodeId);
+                this.addTraceEvent(traceId, {
+                    nodeId,
+                    nodeName: node?.name ?? nodeId,
+                    nodeType: node?.type ?? 'unknown',
+                    action: 'no downstream — request terminated',
+                    timestamp: this.tick,
+                    method: parentParticle?.method,
+                    readWrite: parentParticle?.readWrite,
+                });
+                this.finalizeTrace(traceId, true);
+            }
+            return;
+        }
 
         const node = this.nodeMap.get(nodeId)!;
         const nodeType = node.type;
@@ -916,7 +930,10 @@ export class SimulationRunner {
         const rw = pp?.readWrite ?? 'read';
         const isCdn = node.type === 'cdn';
         const c = node.specificConfig as Record<string, unknown>;
-        const writeStrategy = (c.writeStrategy as string) ?? 'write-around';
+        let writeStrategy = (c.writeStrategy as string) ?? 'write-around';
+        if (node.type === 'cache' && this.getCachePlacement(node.id) === 'edge') {
+            writeStrategy = 'write-around';
+        }
 
         // CDN: writes always pass through (no cache involvement)
         // Cache: writes branch on writeStrategy
@@ -1239,6 +1256,21 @@ export class SimulationRunner {
         return Math.random() < ratio ? 'read' : 'write';
     }
 
+    /** Cache topology: edge (CDN→Cache), backend (App→Cache→DB), blob (App→Cache→Object Store), l2 (Cache→Cache). */
+    private getCachePlacement(nodeId: string): 'edge' | 'backend' | 'blob' | 'l2' {
+        // Order is intentional: edge and blob take precedence over l2.
+        // A cache with both CDN and another cache as upstream is treated as edge.
+        const inbound = this.connectionsByTarget.get(nodeId) ?? [];
+        const outbound = this.connectionsBySource.get(nodeId) ?? [];
+        const upstreamTypes = new Set(inbound.map((c) => this.nodeMap.get(c.sourceId)?.type));
+        const downstreamTypes = new Set(outbound.map((c) => this.nodeMap.get(c.targetId)?.type));
+
+        if (upstreamTypes.has('cdn')) return 'edge';
+        if (downstreamTypes.has('object_store')) return 'blob';
+        if (upstreamTypes.has('cache')) return 'l2';
+        return 'backend';
+    }
+
     private getCacheHitRate(node: CanvasNode): number {
         const c = node.specificConfig as Record<string, unknown>;
         const ttl = (c.defaultTtl as number) ?? (c.cacheTtl as number) ?? 3600;
@@ -1352,6 +1384,7 @@ export class SimulationRunner {
                         writeStrategy: (c.writeStrategy as string) ?? 'write-around',
                         ttl: (c.defaultTtl as number) ?? 3600,
                         maxEntries: Math.min(1000, Math.max(1, (c.maxEntries as number) ?? 24)),
+                        placement: this.getCachePlacement(node.id),
                     };
                     break;
                 }

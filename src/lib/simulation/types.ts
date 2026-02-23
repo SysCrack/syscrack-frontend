@@ -76,8 +76,10 @@ export interface CacheEntry {
     willEvict: boolean; // true if this is the eviction candidate
 }
 
+export type CachePlacement = 'edge' | 'backend' | 'blob' | 'l2';
+
 export type ComponentDetailData =
-    | { kind: 'cache'; hitRate: number; hits: number; misses: number; entries: CacheEntry[]; evictionPolicy: string; readStrategy: string; writeStrategy: string; ttl: number; maxEntries: number }
+    | { kind: 'cache'; hitRate: number; hits: number; misses: number; entries: CacheEntry[]; evictionPolicy: string; readStrategy: string; writeStrategy: string; ttl: number; maxEntries: number; placement?: CachePlacement }
     | { kind: 'cdn'; hitRate: number; hits: number; misses: number; edgeLocations: number; ttl: number }
     | { kind: 'load_balancer'; algorithm: string; backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[] }
     | { kind: 'proxy'; algorithm: string; connectionPooling: boolean; maxConnections: number; backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[] }

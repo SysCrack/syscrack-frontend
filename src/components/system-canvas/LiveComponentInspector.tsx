@@ -55,10 +55,13 @@ function UtilizationBar({ value, label }: { value: number; label?: string }) {
 
 // ── Per-type detail panels ──
 
+const PLACEMENT_LABELS: Record<string, string> = { edge: 'Edge', backend: 'Backend', blob: 'Blob', l2: 'L2' };
+
 function CacheDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'cache' }> }) {
     return (
         <>
             <Section title="Config">
+                {d.placement && <Row label="Placement" value={PLACEMENT_LABELS[d.placement] ?? d.placement} />}
                 <Row label="Read strategy" value={d.readStrategy} />
                 <Row label="Write strategy" value={d.writeStrategy} />
                 <Row label="Eviction" value={d.evictionPolicy} />
