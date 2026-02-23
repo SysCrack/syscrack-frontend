@@ -240,9 +240,11 @@ function APIGatewayDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'api_
 }
 
 function ClientDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'client' }> }) {
+    const readPct = Math.round((d.readWriteRatio ?? 0.8) * 100);
     return (
         <Section title="Config">
             <Row label="Requests/sec" value={Math.round(d.requestsPerSecond)} />
+            <Row label="Read ratio" value={`${readPct}% read`} />
         </Section>
     );
 }

@@ -87,7 +87,7 @@ export type ComponentDetailData =
     | { kind: 'message_queue'; partitions: number; isFifo: boolean; queueDepth: number; enqueued: number; processed: number; deadLettered: number }
     | { kind: 'object_store'; storageClass: string; capacity: number; utilization: number }
     | { kind: 'api_gateway'; authEnabled: boolean; rateLimiting: boolean; rateLimit: number; allowed: number; dropped: number }
-    | { kind: 'client'; requestsPerSecond: number };
+    | { kind: 'client'; requestsPerSecond: number; readWriteRatio?: number };
 
 export interface NodeDetailMetrics extends NodeSimSummary {
     currentRps: number;

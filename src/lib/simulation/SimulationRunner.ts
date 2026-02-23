@@ -164,6 +164,8 @@ export interface LiveMetrics {
     avgLatencyMs: number;
     errorRate: number;
     estimatedCostMonthly: number;
+    readParticles: number;
+    writeParticles: number;
     nodeMetrics: Record<string, NodeDetailMetrics>;
 }
 
@@ -648,7 +650,8 @@ export class SimulationRunner {
 
                 while (acc >= 1) {
                     acc -= 1;
-                    this.spawnFromNode(node.id, requestsPerParticle);
+                    const rw = this.sampleReadWrite(node);
+                    this.spawnFromNode(node.id, requestsPerParticle, undefined, undefined, rw);
 
                     this.nodeRecentArrivals.set(
                         node.id,
@@ -688,7 +691,7 @@ export class SimulationRunner {
 
     // ── Spawn ──
 
-    private spawnFromNode(nodeId: string, count: number, traceId?: string, parentParticle?: RequestParticle) {
+    private spawnFromNode(nodeId: string, count: number, traceId?: string, parentParticle?: RequestParticle, readWriteOverride?: ReadWrite) {
         const outConns = this.connectionsBySource.get(nodeId) ?? [];
         if (outConns.length === 0) return;
 
@@ -719,7 +722,7 @@ export class SimulationRunner {
                 }
             }
             for (const conn of outConns) {
-                this.emitParticle(conn, allowed, undefined, traceId, parentParticle);
+                this.emitParticle(conn, allowed, undefined, traceId, parentParticle, readWriteOverride);
             }
         } else {
             if (traceId) {
@@ -727,7 +730,7 @@ export class SimulationRunner {
                 this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action: `forwarded to ${targetNames}`, timestamp: this.tick, method: parentParticle?.method, readWrite: parentParticle?.readWrite });
             }
             for (const conn of outConns) {
-                this.emitParticle(conn, count, undefined, traceId, parentParticle);
+                this.emitParticle(conn, count, undefined, traceId, parentParticle, readWriteOverride);
             }
         }
     }
@@ -1185,9 +1188,10 @@ export class SimulationRunner {
         colorOverride?: string,
         traceId?: string,
         parentParticle?: RequestParticle,
+        readWriteOverride?: ReadWrite,
     ) {
         const id = `p${nextParticleId++}`;
-        const rw = parentParticle?.readWrite;
+        const rw = readWriteOverride ?? parentParticle?.readWrite;
         let color: string;
         if (traceId) {
             color = rw === 'write' ? '#f59e0b' : '#eab308';
@@ -1208,7 +1212,7 @@ export class SimulationRunner {
             targetId: conn.targetId,
             traceId,
             method: parentParticle?.method,
-            readWrite: parentParticle?.readWrite,
+            readWrite: rw,
             payloadSize: parentParticle?.payloadSize,
             path: parentParticle?.path,
         });
@@ -1222,6 +1226,17 @@ export class SimulationRunner {
     private getClientRps(node: CanvasNode): number {
         const rps = (node.specificConfig as Record<string, unknown>).requestsPerSecond;
         return typeof rps === 'number' && rps > 0 ? rps : 1000;
+    }
+
+    private getClientReadWriteRatio(node: CanvasNode): number {
+        const ratio = (node.specificConfig as Record<string, unknown>).readWriteRatio;
+        if (typeof ratio !== 'number') return 0.8;
+        return Math.max(0, Math.min(1, ratio));
+    }
+
+    private sampleReadWrite(node: CanvasNode): ReadWrite {
+        const ratio = this.getClientReadWriteRatio(node);
+        return Math.random() < ratio ? 'read' : 'write';
     }
 
     private getCacheHitRate(node: CanvasNode): number {
@@ -1469,6 +1484,7 @@ export class SimulationRunner {
                     detail.componentDetail = {
                         kind: 'client',
                         requestsPerSecond: this.getClientRps(node),
+                        readWriteRatio: this.getClientReadWriteRatio(node),
                     };
                     break;
                 }
@@ -1490,6 +1506,9 @@ export class SimulationRunner {
             cost += (baseCost[node.type] ?? 50) * instances;
         }
 
+        const readParticles = this.particles.filter((p) => (p.readWrite ?? 'read') === 'read').length;
+        const writeParticles = this.particles.filter((p) => p.readWrite === 'write').length;
+
         return {
             rps: Math.round(currentClientRps),
             avgLatencyMs: totalRequests > 0
@@ -1497,6 +1516,8 @@ export class SimulationRunner {
                 : 0,
             errorRate: totalRequests > 0 ? totalErrors / totalRequests : 0,
             estimatedCostMonthly: Math.round(cost),
+            readParticles,
+            writeParticles,
             nodeMetrics,
         };
     }

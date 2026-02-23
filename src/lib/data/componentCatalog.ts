@@ -40,7 +40,7 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
         priority: 'p1',
         description: 'End user or external system sending requests',
         defaultSharedConfig: BASE_SHARED,
-        defaultSpecificConfig: { requestsPerSecond: 1000 },
+        defaultSpecificConfig: { requestsPerSecond: 1000, readWriteRatio: 0.8 },
         applicableLayers: { scaling: false, consistency: false, resilience: false, trafficControl: false, sharding: false },
     },
     {

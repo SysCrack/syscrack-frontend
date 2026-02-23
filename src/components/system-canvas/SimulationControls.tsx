@@ -287,6 +287,15 @@ export default function SimulationControls() {
                         color={errRate > 0.01 ? '#f87171' : '#22c55e'}
                     />
                     <Metric label="Cost" value={`$${cost}/mo`} color="#64748b" />
+                    {isLive && liveMetrics && (
+                        <span title="Read / Write particles in flight">
+                            <Metric
+                                label="R/W"
+                                value={`${liveMetrics.readParticles ?? 0}/${liveMetrics.writeParticles ?? 0}`}
+                                color="#64748b"
+                            />
+                        </span>
+                    )}
                 </>
             )}
 
