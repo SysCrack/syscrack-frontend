@@ -13,6 +13,9 @@ const SPECIFIC_CONFIG_ENUMS: Partial<Record<string, Record<string, string[]>>> =
     load_balancer: {
         algorithm: ['round-robin', 'least-connections', 'random', 'weighted'],
     },
+    proxy: {
+        algorithm: ['round-robin', 'least-connections', 'random'],
+    },
     cache: {
         readStrategy: ['cache-aside', 'read-through'],
         writeStrategy: ['write-through', 'write-behind', 'write-around'],
@@ -41,6 +44,7 @@ function NodeConfig({ node }: { node: CanvasNode }) {
     const updateShared = useCanvasStore((s) => s.updateNodeSharedConfig);
     const updateSpecific = useCanvasStore((s) => s.updateNodeSpecificConfig);
     const removeNode = useCanvasStore((s) => s.removeNode);
+    const clearChaos = useCanvasStore((s) => s.clearChaosModifier);
 
     if (!catalog) return null;
 
@@ -101,8 +105,15 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                 <Section title="Scaling">
                     <NumberField label="Instances" value={node.sharedConfig.scaling.instances} min={1} max={100}
                         onChange={(v) => updateShared(node.id, { scaling: { ...node.sharedConfig.scaling!, instances: v } })} />
-                    <NumberField label="Capacity (RPS)" value={node.sharedConfig.scaling.nodeCapacityRps} min={10} max={100000} step={100}
-                        onChange={(v) => updateShared(node.id, { scaling: { ...node.sharedConfig.scaling!, nodeCapacityRps: v } })} />
+                    <NumberField
+                        label="Capacity (RPS)"
+                        value={node.sharedConfig.scaling.nodeCapacityRps}
+                        min={10}
+                        max={100000}
+                        step={100}
+                        onChange={(v) => updateShared(node.id, { scaling: { ...node.sharedConfig.scaling!, nodeCapacityRps: v } })}
+                        tooltip="Base capacity per instance. During simulation, effective capacity is multiplied by the connection protocol (e.g. TCP 1.3×, gRPC 1.4×), shown in Live Metrics."
+                    />
                 </Section>
             )}
 
@@ -180,13 +191,18 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                 {Object.entries(
                     node.type === 'cache' && !('maxEntries' in node.specificConfig)
                         ? { ...node.specificConfig, maxEntries: 24 }
-                        : node.specificConfig
+                        : node.type === 'client' && !('readWriteRatio' in node.specificConfig)
+                            ? { ...node.specificConfig, readWriteRatio: 0.8 }
+                            : node.specificConfig
                 ).map(([key, value]) => {
                     if (key === 'backendWeights') return null;
                     if (typeof value === 'boolean') return <Toggle key={key} label={fmtLabel(key)} value={value} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
                     if (typeof value === 'number') {
                         if (node.type === 'cache' && key === 'maxEntries') {
                             return <NumberField key={key} label={fmtLabel(key)} value={value} min={1} max={1000} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
+                        }
+                        if (node.type === 'client' && key === 'readWriteRatio') {
+                            return <NumberField key={key} label="Read ratio" value={value} min={0} max={1} step={0.1} onChange={(v) => updateSpecific(node.id, { [key]: Math.max(0, Math.min(1, v)) })} />;
                         }
                         return <NumberField key={key} label={fmtLabel(key)} value={value} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
                     }
@@ -208,6 +224,29 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                     return null;
                 })}
             </Section>
+
+            {/* Clear Chaos */}
+            {node.sharedConfig.chaos && Object.keys(node.sharedConfig.chaos).length > 0 && (
+                <div style={{ padding: 12, borderTop: '1px solid #2a3244' }}>
+                    <button
+                        type="button"
+                        onClick={() => clearChaos(node.id)}
+                        style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: '#fbbf24',
+                            background: 'rgba(245, 158, 11, 0.1)',
+                            border: '1px solid rgba(245, 158, 11, 0.3)',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                        }}
+                    >
+                        Clear Chaos Modifiers
+                    </button>
+                </div>
+            )}
 
             {/* Remove component */}
             <div style={{ padding: 12, marginTop: 'auto', borderTop: '1px solid #2a3244' }}>
@@ -260,10 +299,21 @@ function SelectField({ label, value, options, onChange }: { label: string; value
     );
 }
 
-function NumberField({ label, value, min, max, step, onChange }: { label: string; value: number; min?: number; max?: number; step?: number; onChange: (v: number) => void }) {
+function NumberField({ label, value, min, max, step, onChange, tooltip }: { label: string; value: number; min?: number; max?: number; step?: number; onChange: (v: number) => void; tooltip?: string }) {
     return (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>{label}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#94a3b8' }}>
+                {label}
+                {tooltip && (
+                    <span
+                        title={tooltip}
+                        style={{ cursor: 'help', color: '#64748b', fontSize: 12, lineHeight: 1 }}
+                        aria-label="More info"
+                    >
+                        ⓘ
+                    </span>
+                )}
+            </span>
             <input type="number" value={value} min={min} max={max} step={step || 1} onChange={(e) => onChange(Number(e.target.value))}
                 style={{ background: '#121826', border: '1px solid #2a3244', borderRadius: 4, color: '#e2e8f0', fontSize: 11, padding: '2px 6px', outline: 'none', width: 70, textAlign: 'right' }} />
         </div>

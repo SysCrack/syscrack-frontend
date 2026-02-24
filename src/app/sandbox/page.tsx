@@ -12,6 +12,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import ConfigSidebar from '@/components/system-canvas/ConfigSidebar';
 import ConnectionConfigPanel from '@/components/system-canvas/ConnectionConfigPanel';
@@ -19,6 +20,7 @@ import LiveComponentInspector from '@/components/system-canvas/LiveComponentInsp
 import RequestTracePanel from '@/components/system-canvas/RequestTracePanel';
 import SimulationControls from '@/components/system-canvas/SimulationControls';
 import SimulationResults from '@/components/system-canvas/SimulationResults';
+import { TopNav } from '@/components/layout/TopNav';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useCanvasSimulationStore } from '@/stores/canvasSimulationStore';
 
@@ -32,6 +34,23 @@ const ComponentPalette = dynamic(
     { ssr: false },
 );
 
+function handleOverlayDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+}
+
+function handleOverlayDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const componentType = e.dataTransfer.getData('application/syscrack-component');
+    if (componentType) {
+        window.dispatchEvent(new CustomEvent('syscrack-palette-drop', {
+            detail: { clientX: e.clientX, clientY: e.clientY, componentType },
+        }));
+    }
+}
+
 function SandboxTitleBar() {
     const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
     const selectedConnectionId = useCanvasStore((s) => s.selectedConnectionId);
@@ -40,6 +59,8 @@ function SandboxTitleBar() {
 
     return (
         <div
+            onDragOver={handleOverlayDragOver}
+            onDrop={handleOverlayDrop}
             style={{
                 position: 'absolute',
                 top: 12,
@@ -61,6 +82,23 @@ function SandboxTitleBar() {
             <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'Inter, system-ui, sans-serif' }}>
                 Drag components • Click ports to connect • Configure
             </span>
+            <Link
+                href="/"
+                style={{
+                    marginLeft: 8,
+                    padding: '4px 10px',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: '#bfdbfe',
+                    background: 'rgba(59, 130, 246, 0.12)',
+                    border: '1px solid rgba(59, 130, 246, 0.4)',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    textDecoration: 'none',
+                }}
+            >
+                Exit to dashboard
+            </Link>
             {hasSelection && (
                 <button
                     type="button"
@@ -87,7 +125,7 @@ function SandboxTitleBar() {
 
 /**
  * Right panel logic:
- * - If simulation active AND one node selected → LiveComponentInspector (metrics win over traces)
+ * - If simulation active AND one node selected → LiveComponentInspector (metrics)
  * - If traceHistory has traces (step-through debug) → RequestTracePanel (collapsible)
  * - If simulation active → SimulationResults (collapsible)
  * - If simulation idle AND one node selected → ConfigSidebar
@@ -119,47 +157,45 @@ export default function SandboxPage() {
     const [paletteCollapsed, setPaletteCollapsed] = useState(false);
     const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
     return (
-        <div
-            style={{
-                height: '100vh',
-                display: 'flex',
-                background: '#121826',
-                overflow: 'hidden',
-            }}
-        >
-            {/* Left — Component Palette */}
-            <div style={{ flexShrink: 0 }}>
-                <ComponentPalette
-                    collapsed={paletteCollapsed}
-                    onToggle={() => setPaletteCollapsed((v) => !v)}
-                />
-            </div>
-
-            {/* Center — Canvas */}
-            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
-                <SystemCanvas />
-
-                {/* Top-left: title + delete when selection */}
-                <SandboxTitleBar />
-
-                {/* Top-right: simulation controls + metrics */}
-                <div
-                    style={{
-                        position: 'absolute',
-                        top: 12,
-                        right: 12,
-                        pointerEvents: 'auto',
-                    }}
-                >
-                    <SimulationControls />
+        <div className="min-h-screen flex flex-col bg-[var(--color-canvas-bg)]">
+            <TopNav />
+            <main className="flex-1 flex overflow-hidden">
+                {/* Left — Component Palette */}
+                <div style={{ flexShrink: 0 }}>
+                    <ComponentPalette
+                        collapsed={paletteCollapsed}
+                        onToggle={() => setPaletteCollapsed((v) => !v)}
+                    />
                 </div>
-            </div>
 
-            {/* Right — Config or Results panel */}
-            <RightPanel
-                collapsed={rightPanelCollapsed}
-                onToggle={() => setRightPanelCollapsed((v) => !v)}
-            />
+                {/* Center — Canvas */}
+                <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
+                    <SystemCanvas />
+
+                    {/* Top-left: title + delete when selection */}
+                    <SandboxTitleBar />
+
+                    {/* Top-right: simulation controls + metrics */}
+                    <div
+                        onDragOver={handleOverlayDragOver}
+                        onDrop={handleOverlayDrop}
+                        style={{
+                            position: 'absolute',
+                            top: 12,
+                            right: 12,
+                            pointerEvents: 'auto',
+                        }}
+                    >
+                        <SimulationControls />
+                    </div>
+                </div>
+
+                {/* Right — Config or Results panel */}
+                <RightPanel
+                    collapsed={rightPanelCollapsed}
+                    onToggle={() => setRightPanelCollapsed((v) => !v)}
+                />
+            </main>
         </div>
     );
 }

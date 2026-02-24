@@ -55,10 +55,13 @@ function UtilizationBar({ value, label }: { value: number; label?: string }) {
 
 // ── Per-type detail panels ──
 
+const PLACEMENT_LABELS: Record<string, string> = { edge: 'Edge', backend: 'Backend', blob: 'Blob', l2: 'L2' };
+
 function CacheDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'cache' }> }) {
     return (
         <>
             <Section title="Config">
+                {d.placement && <Row label="Placement" value={PLACEMENT_LABELS[d.placement] ?? d.placement} />}
                 <Row label="Read strategy" value={d.readStrategy} />
                 <Row label="Write strategy" value={d.writeStrategy} />
                 <Row label="Eviction" value={d.evictionPolicy} />
@@ -121,6 +124,27 @@ function LoadBalancerDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'lo
         <>
             <Section title="Config">
                 <Row label="Algorithm" value={d.algorithm} />
+            </Section>
+            <Section title="Backends">
+                {d.backends.map((b) => (
+                    <div key={b.nodeId} style={{ padding: '6px 0', borderBottom: '1px solid #2a3244' }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0' }}>{b.name}</div>
+                        <Row label="Sent requests" value={Math.round(b.sentRequests)} />
+                        <Row label="Active connections" value={b.activeConnections} />
+                    </div>
+                ))}
+            </Section>
+        </>
+    );
+}
+
+function ProxyDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'proxy' }> }) {
+    return (
+        <>
+            <Section title="Config">
+                <Row label="Algorithm" value={d.algorithm} />
+                <Row label="Connection pooling" value={d.connectionPooling ? 'On' : 'Off'} />
+                <Row label="Max connections" value={d.maxConnections} />
             </Section>
             <Section title="Backends">
                 {d.backends.map((b) => (
@@ -219,9 +243,11 @@ function APIGatewayDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'api_
 }
 
 function ClientDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'client' }> }) {
+    const readPct = Math.round((d.readWriteRatio ?? 0.8) * 100);
     return (
         <Section title="Config">
             <Row label="Requests/sec" value={Math.round(d.requestsPerSecond)} />
+            <Row label="Read ratio" value={`${readPct}% read`} />
         </Section>
     );
 }
@@ -310,6 +336,7 @@ export default function LiveComponentInspector({ nodeId }: LiveComponentInspecto
                     {detail.componentDetail.kind === 'cache' && <CacheDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'cdn' && <CDNDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'load_balancer' && <LoadBalancerDetail d={detail.componentDetail} />}
+                    {detail.componentDetail.kind === 'proxy' && <ProxyDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'app_server' && <AppServerDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'database_sql' && <DatabaseSQLDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'database_nosql' && <DatabaseNoSQLDetail d={detail.componentDetail} />}

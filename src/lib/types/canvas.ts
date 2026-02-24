@@ -14,7 +14,8 @@ export type ComponentCategory =
     | 'storage'
     | 'messaging'
     | 'ai'
-    | 'techniques';
+    | 'techniques'
+    | 'chaos';
 
 export type CanvasComponentType =
     // Traffic & Edge
@@ -24,6 +25,7 @@ export type CanvasComponentType =
     | 'dns'
     // Compute
     | 'app_server'
+    | 'proxy'
     | 'worker'
     | 'serverless'
     | 'auth_service'
@@ -45,6 +47,11 @@ export type CanvasComponentType =
     | 'shard'
     | 'replica'
     | 'partition'
+    // Chaos
+    | 'chaos_latency'
+    | 'chaos_failure'
+    | 'chaos_spike'
+    | 'chaos_partition'
     // Meta
     | 'client';
 
@@ -84,6 +91,13 @@ export interface TrafficControlConfig {
     rateLimitStrategy?: 'token-bucket' | 'sliding-window' | 'fixed-window';
 }
 
+export interface ChaosConfig {
+    latencyInjectionMs?: number;
+    nodeFailure?: boolean;
+    loadSpikeMultiplier?: number;
+    networkPartition?: boolean;
+}
+
 export interface SharedConfig {
     deployment: DeploymentConfig;
     display: DisplayConfig;
@@ -91,6 +105,7 @@ export interface SharedConfig {
     consistency?: ConsistencyConfig;
     resilience?: ResilienceConfig;
     trafficControl?: TrafficControlConfig;
+    chaos?: ChaosConfig;
 }
 
 // ============ Component-Specific Configs ============
