@@ -181,6 +181,52 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
         defaultSpecificConfig: { type: 'standard', visibilityTimeout: 30, deadLetterQueue: true, maxRetries: 3, retentionPeriod: 168 },
         applicableLayers: { scaling: true, consistency: true, resilience: false, trafficControl: true, sharding: false },
     },
+
+    // ── Chaos ─────────────────────────────────────
+    {
+        type: 'chaos_failure',
+        label: 'Node Failure',
+        icon: '💥',
+        category: 'chaos',
+        priority: 'p1',
+        description: 'Instantly drop all incoming connections to this node',
+        defaultSharedConfig: BASE_SHARED,
+        defaultSpecificConfig: {},
+        applicableLayers: { scaling: false, consistency: false, resilience: false, trafficControl: false, sharding: false },
+    },
+    {
+        type: 'chaos_latency',
+        label: 'Latency Injection',
+        icon: '⏱️',
+        category: 'chaos',
+        priority: 'p1',
+        description: 'Add artificial latency to requests processing at this node',
+        defaultSharedConfig: BASE_SHARED,
+        defaultSpecificConfig: {},
+        applicableLayers: { scaling: false, consistency: false, resilience: false, trafficControl: false, sharding: false },
+    },
+    {
+        type: 'chaos_spike',
+        label: 'Load Spike',
+        icon: '📈',
+        category: 'chaos',
+        priority: 'p1',
+        description: 'Multiply request rate by 5x (Clients only)',
+        defaultSharedConfig: BASE_SHARED,
+        defaultSpecificConfig: {},
+        applicableLayers: { scaling: false, consistency: false, resilience: false, trafficControl: false, sharding: false },
+    },
+    {
+        type: 'chaos_partition',
+        label: 'Network Partition',
+        icon: '✂️',
+        category: 'chaos',
+        priority: 'p1',
+        description: 'Sever network connectivity to/from this node',
+        defaultSharedConfig: BASE_SHARED,
+        defaultSpecificConfig: {},
+        applicableLayers: { scaling: false, consistency: false, resilience: false, trafficControl: false, sharding: false },
+    },
 ];
 
 // ============ Lookup Helpers ============
@@ -200,4 +246,5 @@ export const CATEGORIES = [
     { id: 'messaging', label: 'Messaging', icon: '📬' },
     { id: 'ai', label: 'AI & Agents', icon: '🤖' },
     { id: 'techniques', label: 'Techniques', icon: '🔧' },
+    { id: 'chaos', label: 'Chaos', icon: '🔥' },
 ] as const;

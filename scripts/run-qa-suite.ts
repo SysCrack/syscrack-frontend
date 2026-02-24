@@ -1,38 +1,29 @@
 /**
- * Run QA Suite based on DDIA requirements.
+ * Run QA suite and exit with code 1 if any test fails.
  * Usage: npx tsx scripts/run-qa-suite.ts
+ *
+ * Maps to syscrack-requirements.md §5 Test Cases (TC-001 through TC-064).
  */
-import { writeFileSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import { runQaSuite } from '../src/lib/simulation/qaSuite';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = join(__dirname, '..');
-
 const results = runQaSuite();
-let allPassed = true;
-let passedCount = 0;
+const failed = results.filter((r) => !r.passed);
+const passed = results.filter((r) => r.passed);
 
-console.log('--- SysCrack Sandbox QA Suite ---');
-for (const result of results) {
-    if (result.passed) {
-        console.log(`[PASS] ${result.id} - ${result.name}`);
-        passedCount++;
-    } else {
-        console.log(`[FAIL] ${result.id} - ${result.name}`);
-        for (const failure of result.failures) {
-            console.log(`       -> ${failure}`);
+console.log('\n=== SysCrack QA Suite ===\n');
+
+for (const r of results) {
+    const icon = r.passed ? '✅' : '❌';
+    console.log(`${icon} ${r.id}: ${r.name}`);
+    if (!r.passed && r.failures.length > 0) {
+        for (const f of r.failures) {
+            console.log(`   └ ${f}`);
         }
-        allPassed = false;
     }
 }
 
-console.log('---------------------------------');
-console.log(`Result: ${passedCount} / ${results.length} passed.`);
+console.log(`\n${passed.length} passed, ${failed.length} failed (${results.length} total)\n`);
 
-if (!allPassed) {
+if (failed.length > 0) {
     process.exit(1);
-} else {
-    process.exit(0);
 }

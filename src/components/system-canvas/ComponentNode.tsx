@@ -287,12 +287,33 @@ export default function ComponentNode({
                 </Group>
             )}
 
+            {/* Chaos indicator badge — top-left */}
+            {node.sharedConfig.chaos && Object.keys(node.sharedConfig.chaos).length > 0 && (
+                <Group x={-8} y={-8}>
+                    <Rect
+                        width={24}
+                        height={16}
+                        fill="#7f1d1d"
+                        stroke="#ef4444"
+                        strokeWidth={1}
+                        cornerRadius={4}
+                    />
+                    <Text
+                        text="🔥"
+                        x={5}
+                        y={2}
+                        fontSize={10}
+                        listening={false}
+                    />
+                </Group>
+            )}
+
             {/* ── Simulation Overlays ── */}
 
             {/* SPOF badge — top-right (clickable if diagnostic available) */}
             {isSpof && (
-                <Group 
-                    x={width - 42} 
+                <Group
+                    x={width - 42}
                     y={-8}
                     onClick={onDiagnosticClick}
                     onTap={onDiagnosticClick}

@@ -48,6 +48,8 @@ interface CanvasStore {
     updateNodeName: (id: string, name: string) => void;
     updateNodeSharedConfig: (id: string, config: Partial<SharedConfig>) => void;
     updateNodeSpecificConfig: (id: string, config: Partial<ComponentSpecificConfig>) => void;
+    applyChaosModifier: (id: string, chaosType: CanvasComponentType) => void;
+    clearChaosModifier: (id: string) => void;
 
     // ── Connection Actions ──
     addConnection: (sourceId: string, targetId: string, protocol?: ConnectionProtocol) => CanvasConnection;
@@ -153,6 +155,37 @@ export const useCanvasStore = create<CanvasStore>()(
                 const node = s.nodes.find((n) => n.id === id);
                 if (node) {
                     node.specificConfig = { ...node.specificConfig, ...config };
+                    s.isDirty = true;
+                }
+            }),
+
+        applyChaosModifier: (id, chaosType) =>
+            set((s) => {
+                const node = s.nodes.find((n) => n.id === id);
+                if (node) {
+                    if (!node.sharedConfig.chaos) {
+                        node.sharedConfig.chaos = {};
+                    }
+                    if (chaosType === 'chaos_failure') {
+                        node.sharedConfig.chaos.nodeFailure = true;
+                    } else if (chaosType === 'chaos_latency') {
+                        node.sharedConfig.chaos.latencyInjectionMs = 1000;
+                    } else if (chaosType === 'chaos_spike') {
+                        if (node.type === 'client') {
+                            node.sharedConfig.chaos.loadSpikeMultiplier = 5;
+                        }
+                    } else if (chaosType === 'chaos_partition') {
+                        node.sharedConfig.chaos.networkPartition = true;
+                    }
+                    s.isDirty = true;
+                }
+            }),
+
+        clearChaosModifier: (id) =>
+            set((s) => {
+                const node = s.nodes.find((n) => n.id === id);
+                if (node && node.sharedConfig.chaos) {
+                    delete node.sharedConfig.chaos;
                     s.isDirty = true;
                 }
             }),

@@ -44,6 +44,7 @@ function NodeConfig({ node }: { node: CanvasNode }) {
     const updateShared = useCanvasStore((s) => s.updateNodeSharedConfig);
     const updateSpecific = useCanvasStore((s) => s.updateNodeSpecificConfig);
     const removeNode = useCanvasStore((s) => s.removeNode);
+    const clearChaos = useCanvasStore((s) => s.clearChaosModifier);
 
     if (!catalog) return null;
 
@@ -223,6 +224,29 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                     return null;
                 })}
             </Section>
+
+            {/* Clear Chaos */}
+            {node.sharedConfig.chaos && Object.keys(node.sharedConfig.chaos).length > 0 && (
+                <div style={{ padding: 12, borderTop: '1px solid #2a3244' }}>
+                    <button
+                        type="button"
+                        onClick={() => clearChaos(node.id)}
+                        style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: '#fbbf24',
+                            background: 'rgba(245, 158, 11, 0.1)',
+                            border: '1px solid rgba(245, 158, 11, 0.3)',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                        }}
+                    >
+                        Clear Chaos Modifiers
+                    </button>
+                </div>
+            )}
 
             {/* Remove component */}
             <div style={{ padding: 12, marginTop: 'auto', borderTop: '1px solid #2a3244' }}>

@@ -17,6 +17,7 @@ import Connection from './Connection';
 import ComponentDiagnosticsDialog from './ComponentDiagnosticsDialog';
 import type { CanvasComponentType } from '@/lib/types/canvas';
 import type { SimulationDiagnostic } from '@/lib/simulation/types';
+import { toast } from 'sonner';
 
 // ============ Props ============
 
@@ -56,7 +57,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     const nodeMetrics = (simStatus === 'running' || simStatus === 'paused')
         ? (liveMetrics?.nodeMetrics ?? {})
         : (currentResult?.nodeMetrics ?? {});
-    
+
     // Calculate SPOF set from CURRENT node state (not just stored diagnostics)
     // This ensures SPOF badges update immediately when instances are changed
     const spofSet = useMemo(() => {
@@ -66,7 +67,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
             const instances = node.sharedConfig.scaling?.instances ?? 1;
             const hasSuccessors = connections.some((c) => c.sourceId === node.id);
             const hasPredecessors = connections.some((c) => c.targetId === node.id);
-            
+
             if (instances <= 1 && (hasSuccessors || hasPredecessors)) {
                 spofs.add(node.id);
             }
@@ -76,11 +77,11 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
 
     // Diagnostics dialog state
     const [openDiagnostic, setOpenDiagnostic] = useState<{ nodeId: string; diagnostic: SimulationDiagnostic } | null>(null);
-    
+
     // Connection tooltip state
     const [hoveredConnectionId, setHoveredConnectionId] = useState<string | null>(null);
     const [connectionHoverMessage, setConnectionHoverMessage] = useState<string | null>(null);
-    
+
     // Map diagnostics by component ID (SPOF + per-scenario)
     const diagnosticsByNodeId = new Map<string, SimulationDiagnostic>();
     (simOutput?.spofDiagnostics ?? []).forEach((d) => diagnosticsByNodeId.set(d.componentId, d));
@@ -136,7 +137,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         const utilization = targetMetrics.avgCpuPercent;
         const isWarning = utilization > 70;
         const isCritical = utilization > 90 || !targetMetrics.isHealthy;
-        
+
         if (!isWarning && !isCritical) return null;
 
         const targetNode = nodeMap.get(conn.targetId);
@@ -156,10 +157,10 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         const screenX = stageBox.left + (midX * viewport.scale + viewport.x);
         const screenY = stageBox.top + (midY * viewport.scale + viewport.y);
 
-        const cause = isCritical 
+        const cause = isCritical
             ? `Load ${utilization.toFixed(0)}% (critical > 90%)`
             : `Load ${utilization.toFixed(0)}% (warn > 70%)`;
-        
+
         const fix = isCritical
             ? 'Increase max instances or per-node capacity; add a cache or queue to smooth spikes'
             : 'Increase max instances or per-node capacity';
@@ -312,7 +313,27 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         const x = (e.clientX - stageBox.left - viewport.x) / viewport.scale;
         const y = (e.clientY - stageBox.top - viewport.y) / viewport.scale;
 
-        useCanvasStore.getState().addNode(componentType, x - 80, y - 40);
+        const store = useCanvasStore.getState();
+
+        if (componentType.startsWith('chaos_')) {
+            const targetNode = store.nodes.find(n =>
+                x >= n.x && x <= n.x + n.width && y >= n.y && y <= n.y + n.height
+            );
+
+            if (targetNode) {
+                if (componentType === 'chaos_spike' && targetNode.type !== 'client') {
+                    toast.error('Load Spike can only be applied to Client nodes.');
+                    return;
+                }
+                store.applyChaosModifier(targetNode.id, componentType);
+                toast.success(`Applied ${componentType.replace('chaos_', '')} to ${targetNode.name}`);
+            } else {
+                toast.error('Drop chaos tools directly onto an existing node.');
+            }
+            return;
+        }
+
+        store.addNode(componentType, x - 80, y - 40);
     }, [viewport]);
 
     const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {

@@ -759,115 +759,122 @@ export class SimulationRunner {
             m.set(targetId, (m.get(targetId) ?? 0) + n);
         };
 
-        let chosenConn: CanvasConnection | null = null;
+        // Distribute count across connections based on the strategy
+        // We use a baseline chunking so that large particle counts don't all hit a single node
+        let targets: CanvasConnection[] = [];
 
-        switch (algo) {
-            case 'round-robin': {
-                const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
-                this.rrCounters.set(node.id, idx + 1);
-                chosenConn = outConns[idx];
-                this.emitParticle(chosenConn, count, undefined, traceId, pp);
-                recordSent(chosenConn.targetId, count);
-                break;
+        if (algo === 'weighted') {
+            const bw = (node.specificConfig as Record<string, unknown>).backendWeights as Record<string, number> | undefined;
+            const totalWeight = outConns.reduce((s, c) => s + (bw?.[c.targetId] ?? 1), 0);
+            const useWeights = totalWeight > 0 && outConns.some((c) => (bw?.[c.targetId] ?? 1) > 0);
+
+            if (traceId && count === 1) {
+                let chosenConn: CanvasConnection | null = null;
+                if (useWeights) {
+                    let r = Math.random() * totalWeight;
+                    for (const conn of outConns) {
+                        const w = bw?.[conn.targetId] ?? 1;
+                        if (r < w) {
+                            chosenConn = conn;
+                            break;
+                        }
+                        r -= w;
+                    }
+                    if (!chosenConn) chosenConn = outConns[outConns.length - 1];
+                } else {
+                    const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
+                    this.rrCounters.set(node.id, idx + 1);
+                    chosenConn = outConns[idx];
+                }
+                this.emitParticle(chosenConn!, 1, undefined, traceId, pp);
+                recordSent(chosenConn!.targetId, 1);
+
+                const targetName = this.nodeMap.get(chosenConn!.targetId)?.name ?? chosenConn!.targetId;
+                const methodStr = pp?.method ? ` ${pp.method}` : '';
+                this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed${methodStr} to ${targetName} (${algo})`, timestamp: this.tick, method: pp?.method, readWrite: pp?.readWrite });
+                return;
+            } else if (useWeights) {
+                targets = [...outConns];
+                const frac = targets.map((c) => ({
+                    conn: c,
+                    w: bw?.[c.targetId] ?? 1,
+                    base: Math.floor((count * ((bw?.[c.targetId] ?? 1) / totalWeight))),
+                    remainder: 0,
+                }));
+                frac.forEach((f) => {
+                    f.remainder = (count * (f.w / totalWeight)) - f.base;
+                });
+                let assigned = frac.reduce((s, f) => s + f.base, 0);
+                frac.sort((a, b) => b.remainder - a.remainder);
+                for (const f of frac) {
+                    if (assigned >= count) break;
+                    f.base += 1;
+                    assigned += 1;
+                }
+                for (const f of frac) {
+                    if (f.base > 0) {
+                        this.emitParticle(f.conn, f.base, undefined, traceId, pp);
+                        recordSent(f.conn.targetId, f.base);
+                    }
+                }
+                return;
             }
+        }
 
-            case 'least-connections': {
-                let minConn = outConns[0];
+        // For round-robin, least-connections, random (or fallback from weighted)
+        // If single traced request, pass it to one connection
+        if (traceId && count === 1) {
+            let chosenConn = outConns[0];
+            if (algo === 'least-connections') {
                 let minCount = Infinity;
                 for (const conn of outConns) {
                     const active = this.nodeActiveCount.get(conn.targetId) ?? 0;
                     if (active < minCount) {
                         minCount = active;
-                        minConn = conn;
+                        chosenConn = conn;
                     }
                 }
-                chosenConn = minConn;
-                this.emitParticle(minConn, count, undefined, traceId, pp);
-                recordSent(minConn.targetId, count);
-                break;
-            }
-
-            case 'random': {
-                const idx = Math.floor(Math.random() * outConns.length);
+            } else if (algo === 'random') {
+                chosenConn = outConns[Math.floor(Math.random() * outConns.length)];
+            } else {
+                const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
+                this.rrCounters.set(node.id, idx + 1);
                 chosenConn = outConns[idx];
-                this.emitParticle(chosenConn, count, undefined, traceId, pp);
-                recordSent(chosenConn.targetId, count);
-                break;
             }
 
-            case 'weighted': {
-                const bw = (node.specificConfig as Record<string, unknown>).backendWeights as Record<string, number> | undefined;
-                const totalWeight = outConns.reduce((s, c) => s + (bw?.[c.targetId] ?? 1), 0);
-                const useWeights = totalWeight > 0 && outConns.some((c) => (bw?.[c.targetId] ?? 1) > 0);
+            this.emitParticle(chosenConn, 1, undefined, traceId, pp);
+            recordSent(chosenConn.targetId, 1);
 
-                if (traceId && count === 1) {
-                    if (useWeights) {
-                        let r = Math.random() * totalWeight;
-                        for (const conn of outConns) {
-                            const w = bw?.[conn.targetId] ?? 1;
-                            if (r < w) {
-                                chosenConn = conn;
-                                break;
-                            }
-                            r -= w;
-                        }
-                        if (!chosenConn) chosenConn = outConns[outConns.length - 1];
-                    } else {
-                        const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
-                        this.rrCounters.set(node.id, idx + 1);
-                        chosenConn = outConns[idx];
-                    }
-                    this.emitParticle(chosenConn!, 1, undefined, traceId, pp);
-                    recordSent(chosenConn!.targetId, 1);
-                } else if (useWeights) {
-                    const frac = outConns.map((c) => ({
-                        conn: c,
-                        w: bw?.[c.targetId] ?? 1,
-                        base: Math.floor((count * ((bw?.[c.targetId] ?? 1) / totalWeight))),
-                        remainder: 0,
-                    }));
-                    frac.forEach((f) => {
-                        f.remainder = (count * (f.w / totalWeight)) - f.base;
-                    });
-                    let assigned = frac.reduce((s, f) => s + f.base, 0);
-                    frac.sort((a, b) => b.remainder - a.remainder);
-                    for (const f of frac) {
-                        if (assigned >= count) break;
-                        f.base += 1;
-                        assigned += 1;
-                    }
-                    chosenConn = frac[0].conn;
-                    for (const f of frac) {
-                        if (f.base > 0) {
-                            this.emitParticle(f.conn, f.base, undefined, traceId, pp);
-                            recordSent(f.conn.targetId, f.base);
-                        }
-                    }
-                } else {
-                    const perConn = Math.max(1, Math.round(count / outConns.length));
-                    chosenConn = outConns[0];
-                    for (const conn of outConns) {
-                        this.emitParticle(conn, perConn, undefined, traceId, pp);
-                        recordSent(conn.targetId, perConn);
-                    }
-                }
-                break;
-            }
-            default: {
-                const perConn = Math.max(1, Math.round(count / outConns.length));
-                chosenConn = outConns[0];
-                for (const conn of outConns) {
-                    this.emitParticle(conn, perConn, undefined, traceId, pp);
-                    recordSent(conn.targetId, perConn);
-                }
-                break;
-            }
-        }
-
-        if (traceId && chosenConn) {
             const targetName = this.nodeMap.get(chosenConn.targetId)?.name ?? chosenConn.targetId;
             const methodStr = pp?.method ? ` ${pp.method}` : '';
             this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed${methodStr} to ${targetName} (${algo})`, timestamp: this.tick, method: pp?.method, readWrite: pp?.readWrite });
+            return;
+        }
+
+        // Divide count amongst outConns evenly to represent distributed load over this tick's batch
+        const perConnBase = Math.floor(count / outConns.length);
+        let remainder = count % outConns.length;
+
+        let targetList = [...outConns];
+        if (algo === 'random') {
+            // Shuffle
+            targetList = targetList.sort(() => Math.random() - 0.5);
+        } else if (algo === 'least-connections') {
+            targetList = targetList.sort((a, b) => (this.nodeActiveCount.get(a.targetId) ?? 0) - (this.nodeActiveCount.get(b.targetId) ?? 0));
+        } else {
+            // Round robin - start distributing remainder at the current RR index
+            const startIndex = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
+            this.rrCounters.set(node.id, startIndex + remainder);
+            targetList = [...outConns.slice(startIndex), ...outConns.slice(0, startIndex)];
+        }
+
+        for (let i = 0; i < outConns.length; i++) {
+            const conn = targetList[i];
+            const toSend = perConnBase + (i < remainder ? 1 : 0);
+            if (toSend > 0) {
+                this.emitParticle(conn, toSend, undefined, traceId, pp);
+                recordSent(conn.targetId, toSend);
+            }
         }
     }
 
@@ -881,48 +888,64 @@ export class SimulationRunner {
             m.set(targetId, (m.get(targetId) ?? 0) + n);
         };
 
-        let chosenConn: CanvasConnection;
-
-        switch (algo) {
-            case 'round-robin': {
-                const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
-                this.rrCounters.set(node.id, idx + 1);
-                chosenConn = outConns[idx];
-                break;
-            }
-            case 'least-connections': {
-                let minConn = outConns[0];
-                let minCount = Infinity;
-                for (const conn of outConns) {
-                    const active = this.nodeActiveCount.get(conn.targetId) ?? 0;
-                    if (active < minCount) {
-                        minCount = active;
-                        minConn = conn;
+        // Distribute proxy batched requests equally. Proxy doesn't have weighting.
+        if (traceId && count === 1) {
+            let chosenConn: CanvasConnection;
+            switch (algo) {
+                case 'least-connections': {
+                    let minConn = outConns[0];
+                    let minCount = Infinity;
+                    for (const conn of outConns) {
+                        const active = this.nodeActiveCount.get(conn.targetId) ?? 0;
+                        if (active < minCount) {
+                            minCount = active;
+                            minConn = conn;
+                        }
                     }
+                    chosenConn = minConn;
+                    break;
                 }
-                chosenConn = minConn;
-                break;
+                case 'random': {
+                    chosenConn = outConns[Math.floor(Math.random() * outConns.length)];
+                    break;
+                }
+                default: {
+                    const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
+                    this.rrCounters.set(node.id, idx + 1);
+                    chosenConn = outConns[idx];
+                    break;
+                }
             }
-            case 'random': {
-                const idx = Math.floor(Math.random() * outConns.length);
-                chosenConn = outConns[idx];
-                break;
-            }
-            default: {
-                const idx = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
-                this.rrCounters.set(node.id, idx + 1);
-                chosenConn = outConns[idx];
-                break;
-            }
-        }
+            this.emitParticle(chosenConn, count, undefined, traceId, pp);
+            recordSent(chosenConn.targetId, count);
 
-        this.emitParticle(chosenConn, count, undefined, traceId, pp);
-        recordSent(chosenConn.targetId, count);
-
-        if (traceId) {
             const targetName = this.nodeMap.get(chosenConn.targetId)?.name ?? chosenConn.targetId;
             const methodStr = pp?.method ? ` ${pp.method}` : '';
             this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed via proxy to ${targetName} (${algo})`, timestamp: this.tick, method: pp?.method, readWrite: pp?.readWrite });
+            return;
+        }
+
+        const perConnBase = Math.floor(count / outConns.length);
+        let remainder = count % outConns.length;
+
+        let targetList = [...outConns];
+        if (algo === 'random') {
+            targetList = targetList.sort(() => Math.random() - 0.5);
+        } else if (algo === 'least-connections') {
+            targetList = targetList.sort((a, b) => (this.nodeActiveCount.get(a.targetId) ?? 0) - (this.nodeActiveCount.get(b.targetId) ?? 0));
+        } else {
+            const startIndex = (this.rrCounters.get(node.id) ?? 0) % outConns.length;
+            this.rrCounters.set(node.id, startIndex + remainder);
+            targetList = [...outConns.slice(startIndex), ...outConns.slice(0, startIndex)];
+        }
+
+        for (let i = 0; i < outConns.length; i++) {
+            const conn = targetList[i];
+            const toSend = perConnBase + (i < remainder ? 1 : 0);
+            if (toSend > 0) {
+                this.emitParticle(conn, toSend, undefined, traceId, pp);
+                recordSent(conn.targetId, toSend);
+            }
         }
     }
 
@@ -1087,20 +1110,63 @@ export class SimulationRunner {
         if (!targetNode) return;
 
         const conn = this.connectionMap.get(particle.connectionId);
+        const sourceNode = conn ? this.nodeMap.get(conn.sourceId) : undefined;
         const lossRate = conn ? (PROTOCOL_FACTORS[conn.protocol]?.packetLossRate ?? 0) : 0;
-        if (lossRate > 0 && Math.random() < lossRate) {
+
+        // --- CHAOS ENGINEERING: Network Partition ---
+        const isPartitioned = targetNode.sharedConfig.chaos?.networkPartition || sourceNode?.sharedConfig.chaos?.networkPartition;
+
+        if (isPartitioned || (lossRate > 0 && Math.random() < lossRate)) {
             this.nodeErrorCount.set(
                 particle.targetId,
                 (this.nodeErrorCount.get(particle.targetId) ?? 0) + particle.count,
             );
             const prev = this.nodeActiveCount.get(particle.targetId) ?? 0;
             this.nodeActiveCount.set(particle.targetId, Math.max(0, prev - 1));
+
+            if (particle.traceId) {
+                this._tracedArrivalThisStep = true;
+                this.addTraceEvent(particle.traceId, {
+                    nodeId: targetNode.id,
+                    nodeName: targetNode.name,
+                    nodeType: targetNode.type,
+                    action: isPartitioned ? `network partition: connection dropped` : `packet loss`,
+                    timestamp: this.tick,
+                    method: particle.method,
+                    readWrite: particle.readWrite,
+                    status: 'error',
+                });
+                this.finalizeBranch(particle.traceId, false);
+            }
             return;
         }
 
         // Decrement active count
         const prev = this.nodeActiveCount.get(particle.targetId) ?? 0;
         this.nodeActiveCount.set(particle.targetId, Math.max(0, prev - 1));
+
+        // --- CHAOS ENGINEERING: Node Failure ---
+        if (targetNode.sharedConfig.chaos?.nodeFailure) {
+            this.nodeErrorCount.set(particle.targetId, (this.nodeErrorCount.get(particle.targetId) ?? 0) + particle.count);
+            this.nodeRecentArrivals.set(particle.targetId, (this.nodeRecentArrivals.get(particle.targetId) ?? 0) + particle.count);
+            this.nodeRequestCount.set(particle.targetId, (this.nodeRequestCount.get(particle.targetId) ?? 0) + particle.count);
+
+            if (particle.traceId) {
+                this._tracedArrivalThisStep = true;
+                this.addTraceEvent(particle.traceId, {
+                    nodeId: targetNode.id,
+                    nodeName: targetNode.name,
+                    nodeType: targetNode.type,
+                    action: `node failure: connection refused`,
+                    timestamp: this.tick,
+                    method: particle.method,
+                    readWrite: particle.readWrite,
+                    status: 'error',
+                });
+                this.finalizeBranch(particle.traceId, false);
+            }
+            return;
+        }
 
         // Track arrivals for RPS calculations
         this.nodeRecentArrivals.set(
@@ -1129,6 +1195,11 @@ export class SimulationRunner {
         // Add latency (node processing + protocol overhead + payload + write overhead)
         const protocolOverhead = conn ? (PROTOCOL_FACTORS[conn.protocol]?.overheadMs ?? 0) : 0;
         let latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
+
+        // --- CHAOS ENGINEERING: Latency Injection ---
+        if (targetNode.sharedConfig.chaos?.latencyInjectionMs) {
+            latency += targetNode.sharedConfig.chaos.latencyInjectionMs;
+        }
 
         // Payload size multiplier
         const payloadMult = PAYLOAD_LATENCY_MULTIPLIER[particle.payloadSize ?? 'small'] ?? 1.0;
@@ -1242,7 +1313,14 @@ export class SimulationRunner {
 
     private getClientRps(node: CanvasNode): number {
         const rps = (node.specificConfig as Record<string, unknown>).requestsPerSecond;
-        return typeof rps === 'number' && rps > 0 ? rps : 1000;
+        let baseRps = typeof rps === 'number' && rps > 0 ? rps : 1000;
+
+        // --- CHAOS ENGINEERING: Load Spike ---
+        if (node.sharedConfig.chaos?.loadSpikeMultiplier) {
+            baseRps *= node.sharedConfig.chaos.loadSpikeMultiplier;
+        }
+
+        return baseRps;
     }
 
     private getClientReadWriteRatio(node: CanvasNode): number {
@@ -1273,6 +1351,8 @@ export class SimulationRunner {
 
     private getCacheHitRate(node: CanvasNode): number {
         const c = node.specificConfig as Record<string, unknown>;
+        if (typeof c.hitRate === 'number') return Math.max(0, Math.min(1, c.hitRate));
+
         const ttl = (c.defaultTtl as number) ?? (c.cacheTtl as number) ?? 3600;
         const readStrategy = (c.readStrategy as string) ?? 'cache-aside';
         const writeStrategy = (c.writeStrategy as string) ?? 'write-around';
@@ -1295,9 +1375,9 @@ export class SimulationRunner {
         const avgMultiplier =
             incomingConns.length > 0
                 ? incomingConns.reduce(
-                      (sum, c) => sum + (PROTOCOL_FACTORS[c.protocol]?.capacityMultiplier ?? 1),
-                      0,
-                  ) / incomingConns.length
+                    (sum, c) => sum + (PROTOCOL_FACTORS[c.protocol]?.capacityMultiplier ?? 1),
+                    0,
+                ) / incomingConns.length
                 : 1;
         return instances * rps * avgMultiplier;
     }
