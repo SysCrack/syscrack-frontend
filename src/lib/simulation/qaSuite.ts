@@ -487,10 +487,10 @@ function runTC060(): QaResult {
 
     runner.stepOnce(100);
     for (let i = 0; i < 9; i++) runner.stepOnce(100);
-    const m1 = lastMetrics?.rps ?? 0;
+    const m1 = lastMetrics ? lastMetrics.rps : 0;
 
     for (let i = 0; i < 20; i++) runner.stepOnce(100);
-    const m2 = lastMetrics?.rps ?? 0;
+    const m2 = lastMetrics ? lastMetrics.rps : 0;
 
     const failures: string[] = [];
     if (m1 < 50) failures.push(`After 10 steps RPS was ${m1}, expected > 50`);
