@@ -481,7 +481,8 @@ function runTC060(): QaResult {
     ];
     const connections = [makeConnection('conn1', 'c1', 'app1')];
 
-    let lastMetrics: LiveMetrics | null = null;
+    // Use loose typing here to avoid CI/TS inference issues in this test helper.
+    let lastMetrics: any = null;
     const runner = new SimulationRunner(nodes, connections, (_, metrics) => { lastMetrics = metrics; });
     runner.startForExternalLoop();
 
