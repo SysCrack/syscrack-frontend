@@ -168,6 +168,49 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         return { cause, fix, severity: isCritical ? 'critical' : 'warning', x: screenX, y: screenY };
     })() : null;
 
+    // ── Process drop from overlay (title bar, controls) — custom event with client coords ──
+    const processDropAt = useCallback((clientX: number, clientY: number, componentType: string) => {
+        const stage = stageRef.current;
+        if (!stage) return;
+        const stageBox = stage.container().getBoundingClientRect();
+        const pointerX = clientX - stageBox.left;
+        const pointerY = clientY - stageBox.top;
+        const x = (pointerX - viewport.x) / viewport.scale;
+        const y = (pointerY - viewport.y) / viewport.scale;
+        const store = useCanvasStore.getState();
+        if (componentType.startsWith('chaos_')) {
+            const targetNode = store.nodes.find(n =>
+                x >= n.x && x <= n.x + n.width && y >= n.y && y <= n.y + n.height
+            );
+            if (targetNode) {
+                if (componentType === 'chaos_spike' && targetNode.type !== 'client') {
+                    toast.error('Load Spike can only be applied to Client nodes.');
+                    return;
+                }
+                store.applyChaosModifier(targetNode.id, componentType as CanvasComponentType);
+                toast.success(`Applied ${componentType.replace('chaos_', '')} to ${targetNode.name}`);
+                // Push chaos config to running simulation worker
+                const simStatus = useCanvasSimulationStore.getState().status;
+                if (simStatus === 'running' || simStatus === 'paused') {
+                    useCanvasSimulationStore.getState().updateRunningSimulationNodes();
+                }
+            } else {
+                toast.error('Drop chaos tools directly onto an existing node.');
+            }
+        } else {
+            store.addNode(componentType as CanvasComponentType, x - 80, y - 40);
+        }
+    }, [viewport]);
+
+    useEffect(() => {
+        const handler = (e: CustomEvent<{ clientX: number; clientY: number; componentType: string }>) => {
+            const d = e.detail;
+            processDropAt(d.clientX, d.clientY, d.componentType);
+        };
+        window.addEventListener('syscrack-palette-drop' as any, handler);
+        return () => window.removeEventListener('syscrack-palette-drop' as any, handler);
+    }, [processDropAt]);
+
     // ── Resize observer ──
     useEffect(() => {
         const container = containerRef.current;
@@ -303,15 +346,21 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     // ── Drag-and-drop from palette ──
     const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault();
+        e.stopPropagation();
         const componentType = e.dataTransfer.getData('application/syscrack-component') as CanvasComponentType;
         if (!componentType) return;
 
         const stage = stageRef.current;
         if (!stage) return;
 
-        const stageBox = stage.container().getBoundingClientRect();
-        const x = (e.clientX - stageBox.left - viewport.x) / viewport.scale;
-        const y = (e.clientY - stageBox.top - viewport.y) / viewport.scale;
+        // Use Konva's coordinate helpers (accounts for stage transform)
+        stage.setPointersPositions(e.nativeEvent);
+        const pointer = stage.getPointerPosition();
+        if (!pointer) return;
+
+        // Convert from stage container coords to world coords (inverse of viewport transform)
+        const x = (pointer.x - viewport.x) / viewport.scale;
+        const y = (pointer.y - viewport.y) / viewport.scale;
 
         const store = useCanvasStore.getState();
 
@@ -327,6 +376,11 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                 }
                 store.applyChaosModifier(targetNode.id, componentType);
                 toast.success(`Applied ${componentType.replace('chaos_', '')} to ${targetNode.name}`);
+                // Push chaos config to running simulation worker
+                const simStatus = useCanvasSimulationStore.getState().status;
+                if (simStatus === 'running' || simStatus === 'paused') {
+                    useCanvasSimulationStore.getState().updateRunningSimulationNodes();
+                }
             } else {
                 toast.error('Drop chaos tools directly onto an existing node.');
             }
@@ -338,6 +392,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
 
     const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault();
+        e.stopPropagation();
         e.dataTransfer.dropEffect = 'copy';
     }, []);
 
