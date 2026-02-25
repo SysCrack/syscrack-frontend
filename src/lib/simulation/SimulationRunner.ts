@@ -17,6 +17,7 @@ import type { CanvasNode, CanvasConnection, CanvasComponentType } from '@/lib/ty
 import { PROTOCOL_FACTORS } from '@/lib/connectionRules';
 import type { NodeSimSummary, NodeDetailMetrics, CacheEntry, RequestTraceEvent, RequestTrace, RequestMethod, ReadWrite, PayloadSize } from './types';
 import { methodToReadWrite, PAYLOAD_LATENCY_MULTIPLIER } from './types';
+import { classifyEdges, EdgeSemantics, ChaosPolicy } from './TopologyInference';
 
 // ── Cache entry simulator (bounded entries, eviction by policy) ──
 
@@ -234,6 +235,9 @@ export class SimulationRunner {
     private connectionsByTarget: Map<string, CanvasConnection[]> = new Map(); // nodeId → inbound conns
     private nodeMap: Map<string, CanvasNode> = new Map();
 
+    // ── Topology Semantics ──
+    public edgeSemantics: Map<string, EdgeSemantics> = new Map();
+
     // Step-through debug: active traces (traceId -> { events, pendingBranches })
     private activeTraces: Map<string, { events: RequestTraceEvent[]; pendingBranches: number }> = new Map();
     private _nextTraceEventId = 0;
@@ -311,6 +315,9 @@ export class SimulationRunner {
             this.connectionsBySource.get(conn.sourceId)?.push(conn);
             this.connectionsByTarget.get(conn.targetId)?.push(conn);
         }
+
+        // Pre-compute routing semantics for all edges
+        this.edgeSemantics = classifyEdges(this.nodes, this.connections);
     }
 
     start() {
@@ -738,6 +745,48 @@ export class SimulationRunner {
             for (const conn of outConns) {
                 this.emitParticle(conn, allowed, undefined, traceId, parentParticle, readWriteOverride);
             }
+        } else if (nodeType === 'app_server') {
+            const cacheConn = outConns.find((c) => this.nodeMap.get(c.targetId)?.type === 'cache');
+            const dbConn = outConns.find((c) => {
+                const t = this.nodeMap.get(c.targetId)?.type;
+                return t === 'database_sql' || t === 'database_nosql';
+            });
+
+            if (cacheConn && dbConn) {
+                const cacheNode = this.nodeMap.get(cacheConn.targetId)!;
+                const cacheHitRate = this.getCacheHitRate(cacheNode);
+                const rw = readWriteOverride ?? parentParticle?.readWrite ?? 'read';
+
+                if (rw === 'read') {
+                    const misses = Math.ceil(count * (1 - cacheHitRate));
+                    if (traceId) {
+                        this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action: `parallel cache routing`, timestamp: this.tick, method: parentParticle?.method, readWrite: rw });
+                    }
+                    if (count > 0) this.emitParticle(cacheConn, count, undefined, traceId, parentParticle, rw);
+                    if (misses > 0) this.emitParticle(dbConn, misses, undefined, traceId, parentParticle, rw);
+                } else {
+                    const writeStrategy = (cacheNode.specificConfig as Record<string, unknown>)?.writeStrategy as string | undefined ?? 'write-around';
+                    if (traceId) {
+                        this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action: `parallel cache write routing (${writeStrategy})`, timestamp: this.tick, method: parentParticle?.method, readWrite: rw });
+                    }
+                    if (writeStrategy === 'write-through') {
+                        if (count > 0) this.emitParticle(cacheConn, count, undefined, traceId, parentParticle, rw);
+                        if (count > 0) this.emitParticle(dbConn, count, undefined, traceId, parentParticle, rw);
+                    } else if (writeStrategy === 'write-behind') {
+                        if (count > 0) this.emitParticle(cacheConn, count, undefined, traceId, parentParticle, rw);
+                    } else { // write-around
+                        if (count > 0) this.emitParticle(dbConn, count, undefined, traceId, parentParticle, rw);
+                    }
+                }
+            } else {
+                if (traceId) {
+                    const targetNames = outConns.map((c) => this.nodeMap.get(c.targetId)?.name ?? c.targetId).join(', ');
+                    this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action: `forwarded to ${targetNames}`, timestamp: this.tick, method: parentParticle?.method, readWrite: parentParticle?.readWrite });
+                }
+                for (const conn of outConns) {
+                    this.emitParticle(conn, count, undefined, traceId, parentParticle, readWriteOverride);
+                }
+            }
         } else {
             if (traceId) {
                 const targetNames = outConns.map((c) => this.nodeMap.get(c.targetId)?.name ?? c.targetId).join(', ');
@@ -1147,6 +1196,33 @@ export class SimulationRunner {
 
         // --- CHAOS ENGINEERING: Node Failure ---
         if (targetNode.sharedConfig.chaos?.nodeFailure) {
+            if (targetNode.type === 'cache') {
+                const outConns = this.connectionsBySource.get(targetNode.id) ?? [];
+                const dbConn = outConns.find((c) => {
+                    const t = this.nodeMap.get(c.targetId)?.type;
+                    return t === 'database_sql' || t === 'database_nosql';
+                });
+                if (dbConn) {
+                    this.nodeRecentArrivals.set(particle.targetId, (this.nodeRecentArrivals.get(particle.targetId) ?? 0) + particle.count);
+                    this.nodeRequestCount.set(particle.targetId, (this.nodeRequestCount.get(particle.targetId) ?? 0) + particle.count);
+
+                    if (particle.traceId) {
+                        this.addTraceEvent(particle.traceId, {
+                            nodeId: targetNode.id,
+                            nodeName: targetNode.name,
+                            nodeType: targetNode.type,
+                            action: `Cache node failure — all traffic rerouting directly to DB. DB receiving full App Server RPS.`,
+                            timestamp: this.tick,
+                            method: particle.method,
+                            readWrite: particle.readWrite,
+                            status: 'warning',
+                        });
+                    }
+                    this.emitParticle(dbConn, particle.count, undefined, particle.traceId, particle);
+                    return;
+                }
+            }
+
             this.nodeErrorCount.set(particle.targetId, (this.nodeErrorCount.get(particle.targetId) ?? 0) + particle.count);
             this.nodeRecentArrivals.set(particle.targetId, (this.nodeRecentArrivals.get(particle.targetId) ?? 0) + particle.count);
             this.nodeRequestCount.set(particle.targetId, (this.nodeRequestCount.get(particle.targetId) ?? 0) + particle.count);
@@ -1350,6 +1426,8 @@ export class SimulationRunner {
     }
 
     private getCacheHitRate(node: CanvasNode): number {
+        if (node.sharedConfig.chaos?.nodeFailure) return 0;
+
         const c = node.specificConfig as Record<string, unknown>;
         if (typeof c.hitRate === 'number') return Math.max(0, Math.min(1, c.hitRate));
 

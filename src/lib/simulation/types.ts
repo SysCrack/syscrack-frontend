@@ -150,7 +150,7 @@ export interface RequestTraceEvent {
     method?: RequestMethod;
     readWrite?: ReadWrite;
     latencyMs?: number;
-    status?: 'ok' | 'error';
+    status?: 'ok' | 'error' | 'warning';
 }
 
 export interface RequestTrace {
