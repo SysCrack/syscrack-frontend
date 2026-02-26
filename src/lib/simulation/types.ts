@@ -97,6 +97,15 @@ export interface NodeDetailMetrics extends NodeSimSummary {
     totalErrors: number;
     capacity: number;
     utilization: number;
+    hitRate?: number;
+    hits?: number;
+    misses?: number;
+    queueDepth?: number;
+    replicationLagMs?: number;
+    staleReadCount?: number;
+    writeErrorRate?: number;
+    instanceCount?: number;
+    diagnostics?: string[];
     componentDetail?: ComponentDetailData;
 }
 

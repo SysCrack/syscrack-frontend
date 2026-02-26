@@ -228,6 +228,15 @@ export class SimulationRunner {
     private apiGatewayAllowanceRemaining: Map<string, number> = new Map();
     private apiGatewayDropped: Map<string, number> = new Map();
 
+    // Circuit Breakers & Cascading Failures
+    public circuitBreakerState: Map<string, 'closed' | 'open' | 'half-open'> = new Map();
+    private circuitBreakerTripTick: Map<string, number> = new Map();
+    private nodeTickRequests: Map<string, number> = new Map();
+    private nodeTickErrors: Map<string, number> = new Map();
+    private nodeHistory: Map<string, { reqs: number; errs: number }[]> = new Map();
+    private lbRemovedBackends: Map<string, Set<string>> = new Map();
+    private lbBackendConsecutiveHighErrors: Map<string, number> = new Map();
+
     // Graph
     private adjacency: Map<string, string[]> = new Map();        // nodeId → [targetNodeId]
     private connectionMap: Map<string, CanvasConnection> = new Map(); // connId → conn
@@ -365,6 +374,14 @@ export class SimulationRunner {
         this.mqProcessAccumulator.clear();
         this.apiGatewayAllowanceRemaining.clear();
         this.apiGatewayDropped.clear();
+
+        this.circuitBreakerState.clear();
+        this.circuitBreakerTripTick.clear();
+        this.nodeTickRequests.clear();
+        this.nodeTickErrors.clear();
+        this.nodeHistory.clear();
+        this.lbRemovedBackends.clear();
+        this.lbBackendConsecutiveHighErrors.clear();
         for (const node of this.nodes) {
             this.nodeActiveCount.set(node.id, 0);
             this.nodeRecentArrivals.set(node.id, 0);
@@ -386,8 +403,15 @@ export class SimulationRunner {
                 const maxEntries = node.type === 'cache' ? Math.min(1000, Math.max(1, (c.maxEntries as number) ?? 24)) : 24;
                 this.cacheSimulators.set(node.id, new CacheEntrySimulator(maxEntries, ev, ttl));
             }
+            this.circuitBreakerState.set(node.id, 'closed');
+            this.circuitBreakerTripTick.set(node.id, 0);
+            this.nodeTickRequests.set(node.id, 0);
+            this.nodeTickErrors.set(node.id, 0);
+            this.nodeHistory.set(node.id, []);
+
             if (node.type === 'load_balancer') {
                 this.lbSentRequests.set(node.id, new Map());
+                this.lbRemovedBackends.set(node.id, new Set());
             }
             if (node.type === 'proxy') {
                 this.proxySentRequests.set(node.id, new Map());
@@ -675,6 +699,57 @@ export class SimulationRunner {
         while (this.accumulator >= tickInterval) {
             this.accumulator -= tickInterval;
             this.tick++;
+
+            for (const node of this.nodes) {
+                const hist = this.nodeHistory.get(node.id) ?? [];
+                const reqs = this.nodeTickRequests.get(node.id) ?? 0;
+                const errs = this.nodeTickErrors.get(node.id) ?? 0;
+                hist.push({ reqs, errs });
+                if (hist.length > 10) hist.shift();
+                this.nodeHistory.set(node.id, hist);
+
+                this.nodeTickRequests.set(node.id, 0);
+                this.nodeTickErrors.set(node.id, 0);
+
+                const cbState = this.circuitBreakerState.get(node.id);
+                if (cbState === 'open') {
+                    const tripTick = this.circuitBreakerTripTick.get(node.id) ?? 0;
+                    if (this.tick - tripTick >= 30) {
+                        this.circuitBreakerState.set(node.id, 'half-open');
+                    }
+                }
+            }
+
+            // LB Health checks
+            for (const [lbId, removed] of this.lbRemovedBackends) {
+                const lbNode = this.nodeMap.get(lbId);
+                if (!lbNode) continue;
+                const interval = (lbNode.specificConfig as any).healthCheckInterval ?? 5;
+                const conns = this.connectionsBySource.get(lbId) ?? [];
+
+                for (const conn of conns) {
+                    const targetId = conn.targetId;
+                    const hist = this.nodeHistory.get(targetId) ?? [];
+                    let totalReqs = 0; let totalErrs = 0;
+                    for (const h of hist) { totalReqs += h.reqs; totalErrs += h.errs; }
+                    const currErrRate = totalReqs > 0 ? totalErrs / totalReqs : 0;
+
+                    const key = `${lbId}_${targetId}`;
+                    let consecutive = this.lbBackendConsecutiveHighErrors.get(key) ?? 0;
+                    if (currErrRate > 0.5 || this.nodeMap.get(targetId)?.sharedConfig.chaos?.nodeFailure) {
+                        consecutive++;
+                    } else {
+                        consecutive = 0;
+                    }
+                    this.lbBackendConsecutiveHighErrors.set(key, consecutive);
+
+                    if (consecutive >= interval) {
+                        removed.add(targetId);
+                    } else if (consecutive === 0) {
+                        removed.delete(targetId);
+                    }
+                }
+            }
         }
 
         // Emit
@@ -693,19 +768,41 @@ export class SimulationRunner {
         this.rafId = requestAnimationFrame(this.loop);
     };
 
+    private checkCircuitBreakerTrip(targetId: string, nodeFailure: boolean) {
+        const hist = this.nodeHistory.get(targetId) ?? [];
+        let totalReqs = this.nodeTickRequests.get(targetId) ?? 0;
+        let totalErrs = this.nodeTickErrors.get(targetId) ?? 0;
+        for (const h of hist) { totalReqs += h.reqs; totalErrs += h.errs; }
 
+        if (nodeFailure || (totalReqs > 0 && totalErrs / totalReqs > 0.5)) {
+            if (this.circuitBreakerState.get(targetId) !== 'open') {
+                this.circuitBreakerState.set(targetId, 'open');
+                this.circuitBreakerTripTick.set(targetId, this.tick);
+            }
+        }
+    }
+
+    private attemptCircuitBreakerRecovery(targetId: string, isError: boolean) {
+        if (this.circuitBreakerState.get(targetId) === 'half-open' && !isError) {
+            this.circuitBreakerState.set(targetId, 'closed');
+        }
+    }
 
     // ── Spawn ──
 
     private spawnFromNode(nodeId: string, count: number, traceId?: string, parentParticle?: RequestParticle, readWriteOverride?: ReadWrite) {
         const outConns = this.connectionsBySource.get(nodeId) ?? [];
-        if (outConns.length === 0) {
+        const node = this.nodeMap.get(nodeId);
+        if (!node) return;
+
+        const nodeType = node.type;
+
+        if (outConns.length === 0 && nodeType !== 'cache' && nodeType !== 'cdn') {
             if (traceId) {
-                const node = this.nodeMap.get(nodeId);
                 this.addTraceEvent(traceId, {
                     nodeId,
-                    nodeName: node?.name ?? nodeId,
-                    nodeType: node?.type ?? 'unknown',
+                    nodeName: node.name,
+                    nodeType,
                     action: 'no downstream — request terminated',
                     timestamp: this.tick,
                     method: parentParticle?.method,
@@ -715,9 +812,6 @@ export class SimulationRunner {
             }
             return;
         }
-
-        const node = this.nodeMap.get(nodeId)!;
-        const nodeType = node.type;
 
         this.nodeRequestCount.set(nodeId, (this.nodeRequestCount.get(nodeId) ?? 0) + count);
 
@@ -746,15 +840,22 @@ export class SimulationRunner {
                 this.emitParticle(conn, allowed, undefined, traceId, parentParticle, readWriteOverride);
             }
         } else if (nodeType === 'app_server') {
-            const cacheConn = outConns.find((c) => this.nodeMap.get(c.targetId)?.type === 'cache');
-            const dbConn = outConns.find((c) => {
+            const hasCache = outConns.some((c) => this.nodeMap.get(c.targetId)?.type === 'cache');
+            const hasDb = outConns.some((c) => {
                 const t = this.nodeMap.get(c.targetId)?.type;
                 return t === 'database_sql' || t === 'database_nosql';
             });
 
-            if (cacheConn && dbConn) {
+            if (hasCache && hasDb) {
+                const cacheConn = outConns.find((c) => this.nodeMap.get(c.targetId)?.type === 'cache')!;
                 const cacheNode = this.nodeMap.get(cacheConn.targetId)!;
                 const cacheHitRate = this.getCacheHitRate(cacheNode);
+
+                const dbConns = outConns.filter((c) => {
+                    const t = this.nodeMap.get(c.targetId)?.type;
+                    return t === 'database_sql' || t === 'database_nosql';
+                });
+
                 const rw = readWriteOverride ?? parentParticle?.readWrite ?? 'read';
 
                 if (rw === 'read') {
@@ -763,7 +864,11 @@ export class SimulationRunner {
                         this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action: `parallel cache routing`, timestamp: this.tick, method: parentParticle?.method, readWrite: rw });
                     }
                     if (count > 0) this.emitParticle(cacheConn, count, undefined, traceId, parentParticle, rw);
-                    if (misses > 0) this.emitParticle(dbConn, misses, undefined, traceId, parentParticle, rw);
+                    if (misses > 0) {
+                        for (const dbConn of dbConns) {
+                            this.emitParticle(dbConn, misses, undefined, traceId, parentParticle, rw);
+                        }
+                    }
                 } else {
                     const writeStrategy = (cacheNode.specificConfig as Record<string, unknown>)?.writeStrategy as string | undefined ?? 'write-around';
                     if (traceId) {
@@ -771,11 +876,27 @@ export class SimulationRunner {
                     }
                     if (writeStrategy === 'write-through') {
                         if (count > 0) this.emitParticle(cacheConn, count, undefined, traceId, parentParticle, rw);
-                        if (count > 0) this.emitParticle(dbConn, count, undefined, traceId, parentParticle, rw);
+                        if (count > 0) {
+                            for (const dbConn of dbConns) {
+                                this.emitParticle(dbConn, count, undefined, traceId, parentParticle, rw);
+                            }
+                        }
                     } else if (writeStrategy === 'write-behind') {
                         if (count > 0) this.emitParticle(cacheConn, count, undefined, traceId, parentParticle, rw);
                     } else { // write-around
-                        if (count > 0) this.emitParticle(dbConn, count, undefined, traceId, parentParticle, rw);
+                        if (count > 0) {
+                            for (const dbConn of dbConns) {
+                                this.emitParticle(dbConn, count, undefined, traceId, parentParticle, rw);
+                            }
+                        }
+                    }
+                }
+
+                // emit to non-cache/non-db outConns
+                for (const conn of outConns) {
+                    const targetType = this.nodeMap.get(conn.targetId)?.type;
+                    if (targetType !== 'cache' && targetType !== 'database_sql' && targetType !== 'database_nosql') {
+                        this.emitParticle(conn, count, undefined, traceId, parentParticle, readWriteOverride);
                     }
                 }
             } else {
@@ -798,8 +919,11 @@ export class SimulationRunner {
         }
     }
 
-    private spawnFromLB(node: CanvasNode, outConns: CanvasConnection[], count: number, traceId?: string, pp?: RequestParticle) {
+    private spawnFromLB(node: CanvasNode, outConnsRaw: CanvasConnection[], count: number, traceId?: string, pp?: RequestParticle) {
         const algo = (node.specificConfig as Record<string, unknown>).algorithm as string || 'round-robin';
+
+        const removed = this.lbRemovedBackends.get(node.id) ?? new Set();
+        const outConns = outConnsRaw.filter((c) => !removed.has(c.targetId));
 
         if (outConns.length === 0) return;
 
@@ -1026,70 +1150,80 @@ export class SimulationRunner {
         }
 
         const sim = this.cacheSimulators.get(node.id);
-        const key = (traceId && pp?.path) ? pp.path : (sim ? CacheEntrySimulator.randomKeyFromPool() : '/unknown');
+        const useConfiguredHitRate = typeof c.hitRate === 'number';
 
-        // Traced with path: use path as cache key for deterministic hit/miss
+        let hits = 0;
+        let misses = 0;
+
+        // Traced with path: use path as cache key
         if (traceId && pp?.path && sim) {
-            const isHit = sim.hasKey(pp.path);
-            if (isHit) sim.recordHit(pp.path);
-            else sim.recordMiss(pp.path);
-            this.cacheHits.set(node.id, (this.cacheHits.get(node.id) ?? 0) + (isHit ? 1 : 0));
-            this.cacheMisses.set(node.id, (this.cacheMisses.get(node.id) ?? 0) + (isHit ? 0 : 1));
-
-            const readStrategy = (c.readStrategy as string) ?? 'cache-aside';
-            const strategyLabel = readStrategy === 'read-through' ? ' (read-through)' : '';
-            const action = isHit
-                ? `cache HIT${strategyLabel} on ${key}`
-                : `cache MISS${strategyLabel} on ${key} -> forwarded to downstream`;
-            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action, timestamp: this.tick, method: pp?.method, readWrite: rw });
-            if (isHit) {
-                this._tracedArrivalThisStep = true;
-                this.finalizeBranch(traceId, true);
-                return;
+            if (sim.hasKey(pp.path)) {
+                hits = 1;
+                sim.recordHit(pp.path);
+            } else {
+                misses = 1;
+                sim.recordMiss(pp.path);
             }
-            for (const conn of outConns) {
-                this.emitParticle(conn, 1, '#f59e0b', traceId, pp);
+        } else {
+            // Non-traced or no path: compute hits/misses realistically
+            if (useConfiguredHitRate) {
+                const hitRate = Math.max(0, Math.min(1, c.hitRate as number));
+                misses = Math.round(count * (1 - hitRate));
+                hits = count - misses;
+                if (sim) {
+                    for (let i = 0; i < hits; i++) sim.recordHit(CacheEntrySimulator.randomKeyFromPool());
+                    for (let i = 0; i < misses; i++) sim.recordMiss(CacheEntrySimulator.randomKeyFromPool());
+                }
+            } else if (sim) {
+                // Entry-based simulation: sample keys realistically
+                for (let i = 0; i < count; i++) {
+                    const key = CacheEntrySimulator.randomKeyFromPool();
+                    if (sim.hasKey(key)) {
+                        hits++;
+                        sim.recordHit(key);
+                    } else {
+                        misses++;
+                        sim.recordMiss(key);
+                    }
+                }
+            } else {
+                // Fallback purely mathematically
+                const hitRate = this.getCacheHitRate(node);
+                misses = Math.round(count * (1 - hitRate));
+                hits = count - misses;
             }
-            return;
         }
-
-        // Non-traced or no path: use hitRate + random keys
-        const hitRate = this.getCacheHitRate(node);
-        const misses = Math.max(1, Math.round(count * (1 - hitRate)));
-        const hits = Math.round(Math.max(0, count - misses));
 
         this.cacheHits.set(node.id, (this.cacheHits.get(node.id) ?? 0) + hits);
         this.cacheMisses.set(node.id, (this.cacheMisses.get(node.id) ?? 0) + misses);
 
-        if (sim) {
-            for (let i = 0; i < hits; i++) sim.recordHit(CacheEntrySimulator.randomKeyFromPool());
-            for (let i = 0; i < misses; i++) sim.recordMiss(CacheEntrySimulator.randomKeyFromPool());
-        }
-
         if (traceId) {
+            const isHit = hits > misses || hits > 0;
             const readStrategy = (c.readStrategy as string) ?? 'cache-aside';
             const strategyLabel = readStrategy === 'read-through' ? ' (read-through)' : '';
-            const action = hits > 0 && misses === 0
+            const key = pp?.path || CacheEntrySimulator.randomKeyFromPool();
+            const action = isHit
                 ? `cache HIT${strategyLabel} on ${key}`
                 : `cache MISS${strategyLabel} on ${key} -> forwarded to downstream`;
             this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action, timestamp: this.tick, method: pp?.method, readWrite: rw });
-            if (hits > 0 && misses === 0) {
+
+            if (isHit || outConns.length === 0) {
                 this._tracedArrivalThisStep = true;
                 this.finalizeBranch(traceId, true);
                 return;
             }
-        }
-
-        if (traceId) {
             for (const conn of outConns) {
-                this.emitParticle(conn, misses, '#f59e0b', traceId, pp);
+                this.emitParticle(conn, misses || 1, '#f59e0b', traceId, pp);
             }
             return;
         }
 
+        if (outConns.length === 0 || misses === 0) return;
+
         // Non-traced: throttle particle emission
-        const missRate = 1 - hitRate;
-        const k = Math.max(1, Math.round(1 / missRate));
+        const realHitRate = count > 0 ? hits / count : 0;
+        const missRate = 1 - realHitRate;
+        const k = Math.max(1, Math.round(1 / (missRate || 0.0001)));
         let acc = this.cacheDownstreamAccumulator.get(node.id) ?? 0;
         let batchCount = this.cacheDownstreamBatchCount.get(node.id) ?? 0;
         acc += misses;
@@ -1158,6 +1292,8 @@ export class SimulationRunner {
         const targetNode = this.nodeMap.get(particle.targetId);
         if (!targetNode) return;
 
+        this.nodeTickRequests.set(particle.targetId, (this.nodeTickRequests.get(particle.targetId) ?? 0) + particle.count);
+
         const conn = this.connectionMap.get(particle.connectionId);
         const sourceNode = conn ? this.nodeMap.get(conn.sourceId) : undefined;
         const lossRate = conn ? (PROTOCOL_FACTORS[conn.protocol]?.packetLossRate ?? 0) : 0;
@@ -1170,6 +1306,9 @@ export class SimulationRunner {
                 particle.targetId,
                 (this.nodeErrorCount.get(particle.targetId) ?? 0) + particle.count,
             );
+            this.nodeTickErrors.set(particle.targetId, (this.nodeTickErrors.get(particle.targetId) ?? 0) + particle.count);
+            this.checkCircuitBreakerTrip(particle.targetId, false);
+
             const prev = this.nodeActiveCount.get(particle.targetId) ?? 0;
             this.nodeActiveCount.set(particle.targetId, Math.max(0, prev - 1));
 
@@ -1196,6 +1335,9 @@ export class SimulationRunner {
 
         // --- CHAOS ENGINEERING: Node Failure ---
         if (targetNode.sharedConfig.chaos?.nodeFailure) {
+            this.nodeTickErrors.set(particle.targetId, (this.nodeTickErrors.get(particle.targetId) ?? 0) + particle.count);
+            this.checkCircuitBreakerTrip(particle.targetId, true);
+
             if (targetNode.type === 'cache') {
                 const outConns = this.connectionsBySource.get(targetNode.id) ?? [];
                 const dbConn = outConns.find((c) => {
@@ -1266,6 +1408,10 @@ export class SimulationRunner {
                 particle.targetId,
                 (this.nodeErrorCount.get(particle.targetId) ?? 0) + particle.count,
             );
+            this.nodeTickErrors.set(particle.targetId, (this.nodeTickErrors.get(particle.targetId) ?? 0) + particle.count);
+            this.checkCircuitBreakerTrip(particle.targetId, false);
+        } else {
+            this.attemptCircuitBreakerRecovery(particle.targetId, false);
         }
 
         // Add latency (node processing + protocol overhead + payload + write overhead)

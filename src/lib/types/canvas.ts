@@ -96,6 +96,9 @@ export interface ChaosConfig {
     nodeFailure?: boolean;
     loadSpikeMultiplier?: number;
     networkPartition?: boolean;
+    cacheFlush?: boolean;
+    resourceExhaustion?: boolean;
+    databaseLock?: boolean;
 }
 
 export interface SharedConfig {

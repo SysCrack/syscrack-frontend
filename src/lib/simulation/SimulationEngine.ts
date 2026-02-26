@@ -17,6 +17,7 @@ import type {
 } from './types';
 import { DEFAULT_SCENARIOS } from './types';
 import { ComponentModel } from './ComponentModel';
+import { classifyEdges, EdgeSemantics } from './TopologyInference';
 import {
     ClientModel,
     CDNModel,
@@ -132,6 +133,7 @@ export class SimulationEngine {
     private nodeTypes: Map<string, CanvasComponentType> = new Map();
     private executionOrder: string[] = [];
     private clientIds: string[] = [];
+    public edgeSemantics: Map<string, EdgeSemantics> = new Map();
 
     constructor(
         private nodes: CanvasNode[],
@@ -161,6 +163,7 @@ export class SimulationEngine {
         }
 
         this.executionOrder = topologicalSort(nodeIds, this.adjacency);
+        this.edgeSemantics = classifyEdges(this.nodes, this.connections);
     }
 
     /** Run all scenarios and return aggregated output. */
@@ -219,8 +222,7 @@ export class SimulationEngine {
     }
 
     /**
-     * Distribute inputQps from an LB to successors according to configured algorithm.
-     * Mutates nodeLoads in place.
+     * Distribute input QPS to load balancer successors based on config strategy.
      */
     private distributeLBLoad(
         nodeId: string,
@@ -337,19 +339,30 @@ export class SimulationEngine {
                             (FLOW_PRIORITY[this.nodeTypes.get(b)!] ?? 99),
                     );
 
-                    const nodeType = this.nodeTypes.get(nodeId)!;
+                    // Group by semantic role
+                    const toDistribute: string[] = [];
+                    for (const s of sorted) {
+                        const conn = this.connections.find((c) => c.sourceId === nodeId && c.targetId === s);
+                        if (!conn) continue;
+                        const role = this.edgeSemantics.get(conn.id) ?? 'passthrough-compute';
 
-                    if (nodeType === 'load_balancer' || nodeType === 'proxy') {
-                        this.distributeLBLoad(nodeId, inputQps, sorted, nodeLoads, history);
-                    } else if (nodeType === 'cache' || nodeType === 'cdn') {
-                        // Cache/CDN reduces via hit rate
-                        const cacheModel = model as CacheModel | CDNModel;
-                        const hitRate = 'hitRate' in cacheModel ? cacheModel.hitRate : 0.85;
-                        const missQps = inputQps * (1 - hitRate);
-                        for (const s of sorted) nodeLoads.set(s, (nodeLoads.get(s) ?? 0) + missQps);
-                    } else {
-                        // Default: broadcast full traffic
-                        for (const s of sorted) nodeLoads.set(s, (nodeLoads.get(s) ?? 0) + inputQps);
+                        if (role === 'absorb-on-hit') {
+                            const hitRate = 'hitRate' in model ? (model as any).hitRate : 0.85;
+                            const missQps = inputQps * (1 - hitRate);
+                            nodeLoads.set(s, (nodeLoads.get(s) ?? 0) + missQps);
+                        } else if (role === 'load-distribute') {
+                            toDistribute.push(s);
+                        } else if (role === 'async-decouple') {
+                            const consumerThroughput = (this.models.get(s)?.maxCapacityQps() ?? inputQps);
+                            nodeLoads.set(s, (nodeLoads.get(s) ?? 0) + Math.min(inputQps, consumerThroughput));
+                        } else {
+                            // Default / fan-out / filter-block (can add specific drops here if needed)
+                            nodeLoads.set(s, (nodeLoads.get(s) ?? 0) + inputQps);
+                        }
+                    }
+
+                    if (toDistribute.length > 0) {
+                        this.distributeLBLoad(nodeId, inputQps, toDistribute, nodeLoads, history);
                     }
                 }
             }
