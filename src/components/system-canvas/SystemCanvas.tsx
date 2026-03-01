@@ -76,7 +76,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         return spofs;
     }, [nodes, connections]);
 
-    // Topology warnings (DDIA tooltips) — by node for badges
+    // Topology warnings — by node for badges
     const topologyWarningsByNodeId = useMemo(() => {
         const list = getTopologyWarnings(nodes, connections);
         const map = new Map<string, TopologyWarning[]>();

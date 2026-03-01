@@ -57,7 +57,7 @@ interface ComponentNodeProps {
     isSpof?: boolean;
     // Diagnostic click handler (opens diagnostics dialog)
     onDiagnosticClick?: () => void;
-    /** Topology/DDIA warnings for this node (badge) */
+    /** Topology warnings for this node (badge) */
     topologyWarnings?: TopologyWarning[];
 }
 
