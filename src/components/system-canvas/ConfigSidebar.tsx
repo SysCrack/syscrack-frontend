@@ -21,6 +21,19 @@ const SPECIFIC_CONFIG_ENUMS: Partial<Record<string, Record<string, string[]>>> =
         writeStrategy: ['write-through', 'write-behind', 'write-around'],
         evictionPolicy: ['lru', 'lfu', 'fifo', 'ttl-based', 'random'],
     },
+    database_sql: {
+        isolation: ['read-uncommitted', 'read-committed', 'repeatable-read', 'serializable'],
+        'storageEngine.type': ['b-tree', 'lsm-tree'],
+        'storageEngine.compactionStrategy': ['size-tiered', 'leveled'],
+    },
+    database_nosql: {
+        'storageEngine.type': ['b-tree', 'lsm-tree'],
+        'storageEngine.compactionStrategy': ['size-tiered', 'leveled'],
+    },
+    app_server: {
+        distributedTransaction: ['none', 'two-phase-commit', 'saga'],
+        sagaCompensation: ['choreography', 'orchestration'],
+    },
 };
 
 export default function ConfigSidebar() {
@@ -155,6 +168,72 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                 </Section>
             )}
 
+            {/* NoSQL: Replication mode + Quorum (leaderless only) */}
+            {node.type === 'database_nosql' && (() => {
+                const spec = node.specificConfig as { replication?: { mode?: string }; quorum?: { n?: number; w?: number; r?: number } };
+                const replication = spec.replication ?? { mode: 'single-leader' };
+                const quorum = spec.quorum ?? { n: 3, w: 2, r: 2 };
+                const n = quorum.n ?? 3;
+                const w = quorum.w ?? 2;
+                const r = quorum.r ?? 2;
+                const mode = replication.mode ?? 'single-leader';
+                return (
+                    <>
+                        <Section title="Replication">
+                            <SelectField
+                                label="Mode"
+                                value={mode}
+                                options={['single-leader', 'multi-leader', 'leaderless']}
+                                onChange={(v) => updateSpecific(node.id, { replication: { ...replication, mode: v } })}
+                            />
+                        </Section>
+                        {mode === 'leaderless' && (
+                            <Section title="Quorum">
+                                <NumberField label="n (replicas)" value={n} min={1} max={99} onChange={(v) => updateSpecific(node.id, { quorum: { n: v, w, r } })} />
+                                <NumberField label="w (write)" value={w} min={1} max={n} onChange={(v) => updateSpecific(node.id, { quorum: { n, w: Math.min(v, n), r } })} />
+                                <NumberField label="r (read)" value={r} min={1} max={n} onChange={(v) => updateSpecific(node.id, { quorum: { n, w, r: Math.min(v, n) } })} />
+                                <div style={{ fontSize: 11, color: w + r > n ? '#4ade80' : '#eab308', marginTop: 4 }}>
+                                    w + r = {w + r} {w + r > n ? '> n' : '≤ n'} {w + r > n ? '✅' : '⚠️'}
+                                </div>
+                            </Section>
+                        )}
+                    </>
+                );
+            })()}
+
+            {/* Sharding (SQL + NoSQL) */}
+            {(node.type === 'database_sql' || node.type === 'database_nosql') && (() => {
+                const spec = node.specificConfig as { sharding?: { enabled?: boolean; strategy?: string; shardKey?: string; shardCount?: number; consistentHashing?: boolean; hotspotFactor?: number } };
+                const sharding = spec.sharding ?? { enabled: false, strategy: 'hash-based', shardKey: 'id', shardCount: 4, consistentHashing: true, hotspotFactor: 0 };
+                const enabled = sharding.enabled ?? false;
+                const strategy = sharding.strategy ?? 'hash-based';
+                const shardCount = sharding.shardCount ?? 4;
+                const consistentHashing = sharding.consistentHashing ?? true;
+                const hotspotFactor = sharding.hotspotFactor ?? 0;
+                return (
+                    <Section title="Sharding">
+                        <Toggle
+                            label="Enabled"
+                            value={enabled}
+                            onChange={(v) => updateSpecific(node.id, { sharding: { ...sharding, enabled: v } })}
+                        />
+                        {enabled && (
+                            <>
+                                <SelectField
+                                    label="Strategy"
+                                    value={strategy}
+                                    options={['range-based', 'hash-based', 'directory-based']}
+                                    onChange={(v) => updateSpecific(node.id, { sharding: { ...sharding, strategy: v } })}
+                                />
+                                <NumberField label="Shard count" value={shardCount} min={1} max={64} onChange={(v) => updateSpecific(node.id, { sharding: { ...sharding, shardCount: v } })} />
+                                <Toggle label="Consistent hashing" value={consistentHashing} onChange={(v) => updateSpecific(node.id, { sharding: { ...sharding, consistentHashing: v } })} />
+                                <NumberField label="Hotspot factor" value={hotspotFactor} min={0} max={1} step={0.1} onChange={(v) => updateSpecific(node.id, { sharding: { ...sharding, hotspotFactor: Math.max(0, Math.min(1, v)) } })} />
+                            </>
+                        )}
+                    </Section>
+                );
+            })()}
+
             {/* Load Balancer: backend weights when algorithm is weighted */}
             {node.type === 'load_balancer' && (node.specificConfig as { algorithm?: string }).algorithm === 'weighted' && (() => {
                 const lbConfig = node.specificConfig as { backendWeights?: Record<string, number> };
@@ -196,32 +275,67 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                             : node.specificConfig
                 ).map(([key, value]) => {
                     if (key === 'backendWeights') return null;
-                    if (typeof value === 'boolean') return <Toggle key={key} label={fmtLabel(key)} value={value} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
-                    if (typeof value === 'number') {
-                        if (node.type === 'cache' && key === 'maxEntries') {
-                            return <NumberField key={key} label={fmtLabel(key)} value={value} min={1} max={1000} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
+                    if (node.type === 'database_nosql' && (key === 'replication' || key === 'quorum')) return null;
+                    if ((node.type === 'database_sql' || node.type === 'database_nosql') && key === 'sharding') return null;
+
+                    const renderField = (k: string, v: any, parentKey?: string) => {
+                        const fullKey = parentKey ? `${parentKey}.${k}` : k;
+
+                        if (typeof v === 'boolean') {
+                            if (fullKey === 'storageEngine.bloomFilters' && (node.specificConfig as any).storageEngine?.type !== 'lsm-tree') return null;
+                            return <Toggle key={fullKey} label={fmtLabel(k)} value={v} onChange={(newV) => {
+                                if (parentKey) {
+                                    updateSpecific(node.id, { [parentKey]: { ...(node.specificConfig as any)[parentKey], [k]: newV } });
+                                } else {
+                                    updateSpecific(node.id, { [k]: newV });
+                                }
+                            }} />;
                         }
-                        if (node.type === 'client' && key === 'readWriteRatio') {
-                            return <NumberField key={key} label="Read ratio" value={value} min={0} max={1} step={0.1} onChange={(v) => updateSpecific(node.id, { [key]: Math.max(0, Math.min(1, v)) })} />;
+                        if (typeof v === 'number') {
+                            if (node.type === 'cache' && k === 'maxEntries') {
+                                return <NumberField key={fullKey} label={fmtLabel(k)} value={v} min={1} max={1000} onChange={(newV) => updateSpecific(node.id, { [k]: newV })} />;
+                            }
+                            if (node.type === 'client' && k === 'readWriteRatio') {
+                                return <NumberField key={fullKey} label="Read ratio" value={v} min={0} max={1} step={0.1} onChange={(newV) => updateSpecific(node.id, { [k]: Math.max(0, Math.min(1, newV)) })} />;
+                            }
+                            return <NumberField key={fullKey} label={fmtLabel(k)} value={v} onChange={(newV) => updateSpecific(node.id, { [k]: newV })} />;
                         }
-                        return <NumberField key={key} label={fmtLabel(key)} value={value} onChange={(v) => updateSpecific(node.id, { [key]: v })} />;
-                    }
-                    if (typeof value === 'string') {
-                        const options = SPECIFIC_CONFIG_ENUMS[node.type]?.[key];
-                        if (options) {
+                        if (typeof v === 'string') {
+                            if (k === 'sagaCompensation' && (node.specificConfig as any).distributedTransaction !== 'saga') return null;
+                            const options = SPECIFIC_CONFIG_ENUMS[node.type]?.[fullKey];
+                            if (options) {
+                                return (
+                                    <SelectField
+                                        key={fullKey}
+                                        label={fmtLabel(k)}
+                                        value={v}
+                                        options={options}
+                                        onChange={(newV) => {
+                                            if (parentKey) {
+                                                updateSpecific(node.id, { [parentKey]: { ...(node.specificConfig as any)[parentKey], [k]: newV } });
+                                            } else {
+                                                updateSpecific(node.id, { [k]: newV });
+                                            }
+                                        }}
+                                    />
+                                );
+                            }
+                            return <TextVal key={fullKey} label={fmtLabel(k)} value={v} />;
+                        }
+                        if (typeof v === 'object' && v !== null && k === 'storageEngine') {
                             return (
-                                <SelectField
-                                    key={key}
-                                    label={fmtLabel(key)}
-                                    value={value}
-                                    options={options}
-                                    onChange={(v) => updateSpecific(node.id, { [key]: v })}
-                                />
+                                <div key={fullKey} style={{ marginTop: 8, paddingLeft: 8, borderLeft: '2px solid #2a3244' }}>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', marginBottom: 4 }}>Storage Engine</div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                        {Object.entries(v).map(([subK, subV]) => renderField(subK, subV, fullKey))}
+                                    </div>
+                                </div>
                             );
                         }
-                        return <TextVal key={key} label={fmtLabel(key)} value={value} />;
-                    }
-                    return null;
+                        return null;
+                    };
+
+                    return renderField(key, value);
                 })}
             </Section>
 

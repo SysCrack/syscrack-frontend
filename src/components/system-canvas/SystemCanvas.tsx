@@ -18,6 +18,7 @@ import ComponentDiagnosticsDialog from './ComponentDiagnosticsDialog';
 import type { CanvasComponentType } from '@/lib/types/canvas';
 import type { SimulationDiagnostic } from '@/lib/simulation/types';
 import { toast } from 'sonner';
+import { getTopologyWarnings, type TopologyWarning } from '@/lib/connectionRules';
 
 // ============ Props ============
 
@@ -73,6 +74,20 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
             }
         }
         return spofs;
+    }, [nodes, connections]);
+
+    // Topology warnings (DDIA tooltips) — by node for badges
+    const topologyWarningsByNodeId = useMemo(() => {
+        const list = getTopologyWarnings(nodes, connections);
+        const map = new Map<string, TopologyWarning[]>();
+        for (const w of list) {
+            if (w.nodeId) {
+                const arr = map.get(w.nodeId) ?? [];
+                arr.push(w);
+                map.set(w.nodeId, arr);
+            }
+        }
+        return map;
     }, [nodes, connections]);
 
     // Diagnostics dialog state
@@ -409,6 +424,15 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         const state = useCanvasStore.getState();
         if (state.connectingFrom) {
             state.finishConnecting(nodeId);
+            const { nodes: nextNodes, connections: nextConnections } = useCanvasStore.getState();
+            const warnings = getTopologyWarnings(nextNodes, nextConnections);
+            for (const w of warnings) {
+                if (w.severity === 'critical') {
+                    toast.error('Topology (Critical)', { description: w.message });
+                } else {
+                    toast.warning('Topology', { description: w.message });
+                }
+            }
         } else {
             state.startConnecting(nodeId);
         }
@@ -530,6 +554,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                             simState={simActive ? nodeMetrics[node.id] : undefined}
                             isSpof={simActive ? spofSet.has(node.id) : false}
                             onDiagnosticClick={simActive && diagnosticsByNodeId.has(node.id) ? () => handleDiagnosticClick(node.id) : undefined}
+                            topologyWarnings={topologyWarningsByNodeId.get(node.id) ?? []}
                         />
                     ))}
                 </Layer>

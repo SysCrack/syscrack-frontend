@@ -10,7 +10,7 @@ import { Group, Rect, Text, Circle } from 'react-konva';
 import { useRef, useState, useCallback } from 'react';
 import type Konva from 'konva';
 import type { CanvasNode, CanvasComponentType } from '@/lib/types/canvas';
-import { validateConnection } from '@/lib/connectionRules';
+import { validateConnection, type TopologyWarning } from '@/lib/connectionRules';
 import type { NodeSimSummary } from '@/lib/simulation/types';
 import { getCatalogEntry } from '@/lib/data/componentCatalog';
 
@@ -57,6 +57,8 @@ interface ComponentNodeProps {
     isSpof?: boolean;
     // Diagnostic click handler (opens diagnostics dialog)
     onDiagnosticClick?: () => void;
+    /** Topology/DDIA warnings for this node (badge) */
+    topologyWarnings?: TopologyWarning[];
 }
 
 // ============ Component ============
@@ -74,6 +76,7 @@ export default function ComponentNode({
     simState,
     isSpof,
     onDiagnosticClick,
+    topologyWarnings = [],
 }: ComponentNodeProps) {
     const groupRef = useRef<Konva.Group>(null);
     const [isHovered, setIsHovered] = useState(false);
@@ -337,6 +340,29 @@ export default function ComponentNode({
                     />
                 </Group>
             )}
+
+            {/* Topology warning badge — top-right, below SPOF or alone */}
+            {topologyWarnings.length > 0 && (() => {
+                const hasCritical = topologyWarnings.some((w) => w.severity === 'critical');
+                const label = hasCritical ? 'CRITICAL' : 'WARNING';
+                const fill = hasCritical ? '#ef4444' : '#f59e0b';
+                const badgeY = isSpof ? 10 : -8;
+                return (
+                    <Group x={width - 52} y={badgeY}>
+                        <Rect width={52} height={16} fill={fill} cornerRadius={4} />
+                        <Text
+                            text={label}
+                            x={3}
+                            y={2}
+                            fontSize={8}
+                            fontFamily="Inter, system-ui, sans-serif"
+                            fontStyle="700"
+                            fill="#000"
+                            listening={false}
+                        />
+                    </Group>
+                );
+            })()}
 
             {/* Latency badge — bottom-center */}
             {simState && (

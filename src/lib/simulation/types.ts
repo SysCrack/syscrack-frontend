@@ -79,14 +79,14 @@ export interface CacheEntry {
 export type CachePlacement = 'edge' | 'backend' | 'blob' | 'l2';
 
 export type ComponentDetailData =
-    | { kind: 'cache'; hitRate: number; hits: number; misses: number; entries: CacheEntry[]; evictionPolicy: string; readStrategy: string; writeStrategy: string; ttl: number; maxEntries: number; placement?: CachePlacement }
+    | { kind: 'cache'; hitRate: number; hits: number; misses: number; entries: CacheEntry[]; evictionPolicy: string; readStrategy: string; writeStrategy: string; ttl: number; maxEntries: number; placement?: CachePlacement; staleReadCount?: number }
     | { kind: 'cdn'; hitRate: number; hits: number; misses: number; edgeLocations: number; ttl: number }
     | { kind: 'load_balancer'; algorithm: string; backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[] }
     | { kind: 'proxy'; algorithm: string; connectionPooling: boolean; maxConnections: number; backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[] }
-    | { kind: 'app_server'; activeInstances: number; maxInstances: number; autoScaling: boolean; instanceType: string }
-    | { kind: 'database_sql'; engine: string; readCapacity: number; writeCapacity: number; readReplicas: number; connectionPooling: boolean; activeConnections: number }
-    | { kind: 'database_nosql'; engine: string; consistencyLevel: string; capacity: number; utilization: number }
-    | { kind: 'message_queue'; partitions: number; isFifo: boolean; queueDepth: number; enqueued: number; processed: number; deadLettered: number }
+    | { kind: 'app_server'; activeInstances: number; maxInstances: number; autoScaling: boolean; instanceType: string; distributedTransaction?: string; sagaCompensation?: string }
+    | { kind: 'database_sql'; engine: string; readCapacity: number; writeCapacity: number; readReplicas: number; connectionPooling: boolean; activeConnections: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number }
+    | { kind: 'database_nosql'; engine: string; consistencyLevel: string; capacity: number; utilization: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; quorumConditionMet?: boolean; quorumSummary?: string; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number }
+    | { kind: 'message_queue'; partitions: number; isFifo: boolean; queueDepth: number; enqueued: number; processed: number; deadLettered: number; droppedMessages?: number; deliveryGuarantee?: string }
     | { kind: 'object_store'; storageClass: string; capacity: number; utilization: number }
     | { kind: 'api_gateway'; authEnabled: boolean; rateLimiting: boolean; rateLimit: number; allowed: number; dropped: number }
     | { kind: 'client'; requestsPerSecond: number; readWriteRatio?: number };
@@ -107,6 +107,11 @@ export interface NodeDetailMetrics extends NodeSimSummary {
     instanceCount?: number;
     diagnostics?: string[];
     componentDetail?: ComponentDetailData;
+    quorumConditionMet?: boolean;
+    quorumSummary?: string;
+    isHotShard?: boolean;
+    hotshardLatencyMultiplier?: number;
+    shardCount?: number;
 }
 
 export interface ScenarioResult {
@@ -160,6 +165,7 @@ export interface RequestTraceEvent {
     readWrite?: ReadWrite;
     latencyMs?: number;
     status?: 'ok' | 'error' | 'warning';
+    staleRead?: boolean;    // true when read hit cache but data was pending write-behind
 }
 
 export interface RequestTrace {

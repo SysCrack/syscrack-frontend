@@ -200,3 +200,16 @@ export function getChaosRoutingPolicy(
 
     return policy;
 }
+
+export function isMultiDBWrite(
+    appServerNodeId: string,
+    connections: CanvasConnection[],
+    nodeMap: Map<string, CanvasNode>,
+): boolean {
+    const outConns = connections.filter(c => c.sourceId === appServerNodeId);
+    const dbConns = outConns.filter(c => {
+        const t = nodeMap.get(c.targetId)?.type;
+        return t === 'database_sql' || t === 'database_nosql';
+    });
+    return dbConns.length >= 2;
+}

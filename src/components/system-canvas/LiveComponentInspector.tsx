@@ -161,12 +161,27 @@ function ProxyDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'proxy' }>
 
 function AppServerDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'app_server' }> }) {
     return (
-        <Section title="Config">
-            <Row label="Instance type" value={d.instanceType} />
-            <Row label="Active instances" value={d.activeInstances} />
-            <Row label="Max instances" value={d.maxInstances} />
-            <Row label="Auto-scaling" value={d.autoScaling ? 'On' : 'Off'} />
-        </Section>
+        <>
+            <Section title="Config">
+                <Row label="Instance type" value={d.instanceType} />
+                <Row label="Active instances" value={d.activeInstances} />
+                <Row label="Max instances" value={d.maxInstances} />
+                <Row label="Auto-scaling" value={d.autoScaling ? 'On' : 'Off'} />
+            </Section>
+            {d.distributedTransaction && d.distributedTransaction !== 'none' && (
+                <Section title="Distributed TX">
+                    <Row label="Mode" value={d.distributedTransaction === 'two-phase-commit' ? '2PC' : 'Saga'} />
+                    {d.distributedTransaction === 'saga' && (
+                        <Row label="Compensation" value={d.sagaCompensation ?? 'choreography'} />
+                    )}
+                    <div style={{ fontSize: 10, color: '#64748b', marginTop: 4 }}>
+                        {d.distributedTransaction === 'two-phase-commit'
+                            ? '+100ms/write · 10% risk of lock block'
+                            : '+40ms/write · eventual consistency'}
+                    </div>
+                </Section>
+            )}
+        </>
     );
 }
 
@@ -182,6 +197,28 @@ function DatabaseSQLDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'dat
             </Section>
             <Section title="Live">
                 <Row label="Active connections" value={d.activeConnections} />
+                {d.replicationLagMs !== undefined && <Row label="Replication lag" value={`${Math.round(d.replicationLagMs)}ms`} />}
+                {d.staleReadCount !== undefined && d.staleReadCount > 0 && (
+                    <div style={{ marginTop: 8, padding: '4px 8px', background: 'rgba(234, 179, 8, 0.1)', color: '#eab308', borderRadius: 4, fontSize: 11, fontWeight: 500, borderLeft: '3px solid #eab308' }}>
+                        Warning: {d.staleReadCount} stale reads detected
+                    </div>
+                )}
+                {d.isCompacting && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#fbbf24', animation: 'pulse 2s infinite' }}>
+                        <span>Compaction</span>
+                        <span>⚡ active</span>
+                    </div>
+                )}
+                {!d.isCompacting && d.nextCompactionInSeconds != null && d.nextCompactionInSeconds > 0 && (
+                    <Row label="Next compaction" value={`in ${d.nextCompactionInSeconds}s`} />
+                )}
+                {d.shardCount != null && <Row label="Shards" value={d.shardCount} />}
+                {d.isHotShard && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#fb923c', fontWeight: 600, marginTop: 4 }}>
+                        <span>HOT SHARD</span>
+                        <span>{d.hotshardLatencyMultiplier?.toFixed(1) ?? '—'}× latency</span>
+                    </div>
+                )}
             </Section>
         </>
     );
@@ -194,6 +231,36 @@ function DatabaseNoSQLDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'd
             <Row label="Consistency" value={d.consistencyLevel} />
             <Row label="Capacity" value={d.capacity} />
             <Row label="Utilization" value={`${(d.utilization * 100).toFixed(1)}%`} />
+            {d.replicationLagMs !== undefined && <Row label="Replication lag" value={`${Math.round(d.replicationLagMs)}ms`} />}
+            {d.quorumSummary != null && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, marginTop: 4 }}>
+                    <span style={{ color: '#94a3b8' }}>Quorum</span>
+                    <span style={{ color: d.quorumConditionMet ? '#4ade80' : '#eab308', fontFamily: 'monospace' }}>
+                        {d.quorumSummary} {d.quorumConditionMet ? '✅' : '⚠️'}
+                    </span>
+                </div>
+            )}
+            {d.shardCount != null && <Row label="Shards" value={d.shardCount} />}
+            {d.isHotShard && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#fb923c', fontWeight: 600, marginTop: 4 }}>
+                    <span>HOT SHARD</span>
+                    <span>{d.hotshardLatencyMultiplier?.toFixed(1) ?? '—'}× latency</span>
+                </div>
+            )}
+            {d.staleReadCount !== undefined && d.staleReadCount > 0 && (
+                <div style={{ marginTop: 8, padding: '4px 8px', background: 'rgba(234, 179, 8, 0.1)', color: '#eab308', borderRadius: 4, fontSize: 11, fontWeight: 500, borderLeft: '3px solid #eab308' }}>
+                    Warning: {d.staleReadCount} stale reads detected
+                </div>
+            )}
+            {d.isCompacting && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#fbbf24', animation: 'pulse 2s infinite' }}>
+                    <span>Compaction</span>
+                    <span>⚡ active</span>
+                </div>
+            )}
+            {!d.isCompacting && d.nextCompactionInSeconds != null && d.nextCompactionInSeconds > 0 && (
+                <Row label="Next compaction" value={`in ${d.nextCompactionInSeconds}s`} />
+            )}
         </Section>
     );
 }
@@ -211,6 +278,25 @@ function MessageQueueDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'me
                 <Row label="Queue depth" value={d.queueDepth} />
                 <Row label="Dead-lettered" value={d.deadLettered} />
                 <UtilizationBar value={d.enqueued > 0 ? d.queueDepth / Math.max(d.enqueued, 1) : 0} label="Depth ratio" />
+                {d.deliveryGuarantee && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 4 }}>
+                        <span style={{ color: '#94a3b8' }}>Delivery</span>
+                        <span style={{ color: d.deliveryGuarantee === 'exactly-once' ? '#4ade80' : d.deliveryGuarantee === 'at-most-once' ? '#f87171' : '#fbbf24' }}>
+                            {d.deliveryGuarantee}
+                        </span>
+                    </div>
+                )}
+                {d.deliveryGuarantee === 'exactly-once' && (
+                    <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                        +15ms overhead · −15% throughput
+                    </div>
+                )}
+                {(d.droppedMessages ?? 0) > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#f87171', marginTop: 4 }}>
+                        <span>Dropped messages</span>
+                        <span>{d.droppedMessages}</span>
+                    </div>
+                )}
             </Section>
         </>
     );
@@ -345,6 +431,21 @@ export default function LiveComponentInspector({ nodeId }: LiveComponentInspecto
                     {detail.componentDetail.kind === 'api_gateway' && <APIGatewayDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'client' && <ClientDetail d={detail.componentDetail} />}
                 </>
+            )}
+
+            {detail?.diagnostics && detail.diagnostics.length > 0 && (
+                <Section title="Diagnostics">
+                    {detail.diagnostics.map((diag, i) => {
+                        const isWarning = diag.toLowerCase().includes('warning') || diag.toLowerCase().includes('write-behind active');
+                        const color = isWarning ? '#eab308' : '#f87171';
+                        const bg = isWarning ? 'rgba(234, 179, 8, 0.1)' : 'rgba(248, 113, 113, 0.1)';
+                        return (
+                            <div key={i} style={{ padding: '6px 8px', background: bg, color: color, borderRadius: 4, fontSize: 11, lineHeight: 1.4, borderLeft: `3px solid ${color}` }}>
+                                {diag}
+                            </div>
+                        );
+                    })}
+                </Section>
             )}
 
             {detail && !detail.componentDetail && (
