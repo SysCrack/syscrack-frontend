@@ -17,12 +17,12 @@ export class LoadBalancerModel extends ComponentModel {
         return this.node.sharedConfig.scaling?.nodeCapacityRps ?? BASE_CAPACITY;
     }
 
-    get maxCapacityQps(): number {
+    maxCapacityQps(): number {
         return this.nodeCapacity * this.instances;
     }
 
     processRequest(loadQps: number, concurrentConnections: number): SimulationState {
-        const capacity = this.maxCapacityQps;
+        const capacity = this.maxCapacityQps();
         const utilization = capacity > 0 ? loadQps / capacity : 2;
 
         const baseLatency = 1; // ms (very fast L7 proxy)
