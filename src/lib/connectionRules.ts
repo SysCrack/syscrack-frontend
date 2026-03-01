@@ -173,7 +173,7 @@ export function getTopologyWarnings(
         if (appTargets.length !== 1) continue;
         const appNode = nodeMap.get(appTargets[0]);
         if (!appNode) continue;
-        const instances = (appNode.sharedConfig as Record<string, unknown>)?.scaling as Record<string, unknown> | undefined;
+        const instances = (appNode.sharedConfig as unknown as Record<string, unknown>)?.scaling as Record<string, unknown> | undefined;
         const inst = (instances?.instances as number) ?? 1;
         if (inst !== 1) continue;
         warnings.push({
@@ -283,7 +283,7 @@ export function getTopologyWarnings(
     // 8. Auth Service replicas 1 in request path — CRITICAL
     for (const node of nodes) {
         if ((node.type as string) !== 'auth_service') continue;
-        const instances = (node.sharedConfig as Record<string, unknown>)?.scaling as Record<string, unknown> | undefined;
+        const instances = (node.sharedConfig as unknown as Record<string, unknown>)?.scaling as Record<string, unknown> | undefined;
         const inst = (instances?.instances as number) ?? 1;
         if (inst !== 1) continue;
         const hasConn = (outboundBySource.get(node.id) ?? 0) > 0 || (inboundByTarget.get(node.id) ?? 0) > 0;
