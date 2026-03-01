@@ -159,7 +159,7 @@ export function getTopologyWarnings(
         warnings.push({
             nodeId: node.id,
             message:
-                'Multi-DB writes without 2PC or Saga risk partial failure inconsistency (DDIA Ch.9)',
+                'Multi-DB writes without 2PC or Saga risk partial failure inconsistency.',
             severity: 'critical',
         });
     }
@@ -179,7 +179,7 @@ export function getTopologyWarnings(
         warnings.push({
             nodeId: node.id,
             message:
-                'Single consumer = no parallelism and a SPOF. Add consumer replicas (DDIA Ch.11)',
+                'Single consumer = no parallelism and a SPOF. Add consumer replicas.',
             severity: 'warning',
         });
     }
@@ -193,7 +193,7 @@ export function getTopologyWarnings(
         warnings.push({
             nodeId: node.id,
             message:
-                'Multi-leader enables geo-distributed writes but introduces write conflicts requiring a resolution strategy (DDIA Ch.5)',
+                'Multi-leader enables geo-distributed writes but introduces write conflicts requiring a resolution strategy.',
             severity: 'warning',
         });
     }
@@ -210,7 +210,7 @@ export function getTopologyWarnings(
         warnings.push({
             nodeId: node.id,
             message:
-                'r=1 contacts only one replica — stale reads likely with async replication (DDIA Ch.5)',
+                'r=1 contacts only one replica — stale reads likely with async replication.',
             severity: 'warning',
         });
     }
@@ -230,7 +230,7 @@ export function getTopologyWarnings(
             warnings.push({
                 nodeId: node.id,
                 message:
-                    "Write-around won't cache new writes — cache hit rate will degrade for recently written keys (DDIA Ch.5)",
+                    "Write-around won't cache new writes — cache hit rate will degrade for recently written keys.",
                 severity: 'warning',
             });
         }
@@ -263,7 +263,7 @@ export function getTopologyWarnings(
             warnings.push({
                 nodeId: node.id,
                 message:
-                    'Serializable isolation with horizontal scaling requires cross-instance coordination — throughput won\'t scale linearly (DDIA Ch.7)',
+                    'Serializable isolation with horizontal scaling requires cross-instance coordination — throughput won\'t scale linearly.',
                 severity: 'warning',
             });
         }
@@ -275,7 +275,7 @@ export function getTopologyWarnings(
         warnings.push({
             nodeId: cdcPath.dbNodeId,
             message:
-                "You've built an event-driven derived data pipeline. The target DB has eventual consistency with the source (DDIA Ch.11)",
+                "You've built an event-driven derived data pipeline. The target DB has eventual consistency with the source.",
             severity: 'warning',
         });
     }
@@ -290,7 +290,7 @@ export function getTopologyWarnings(
         if (!hasConn) continue;
         warnings.push({
             nodeId: node.id,
-            message: 'Single-instance Auth Service — SPOF in request path (DDIA Ch.1)',
+            message: 'Single-instance Auth Service — SPOF in request path',
             severity: 'critical',
         });
     }
@@ -314,7 +314,7 @@ export function getTopologyWarnings(
             if ((sc?.writeStrategy as string) !== 'write-behind') continue;
             warnings.push({
                 nodeId: node.id,
-                message: 'Write-behind + serializable isolation is contradictory (DDIA Ch.7)',
+                message: 'Write-behind + serializable isolation is contradictory',
                 severity: 'warning',
             });
         }

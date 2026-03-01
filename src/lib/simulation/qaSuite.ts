@@ -1487,7 +1487,7 @@ function runTC021(): QaResult {
     return { id: 'TC-021', name: 'Async Write Path with MQ + Worker', passed: false, failures: ['BLOCKED: Worker P2 component not implemented'] };
 }
 
-// BLOCKED: requires CDC Connector (DDIA-suggested)
+// BLOCKED: requires CDC Connector
 function runTC023(): QaResult {
     return { id: 'TC-023', name: 'CDC Pipeline', passed: false, failures: ['BLOCKED: CDC Connector not implemented'] };
 }

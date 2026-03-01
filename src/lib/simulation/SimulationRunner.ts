@@ -2224,7 +2224,7 @@ export class SimulationRunner {
                             }
                             const writeRps = detail.currentRps > 0 && hits + misses > 0 ? (detail.currentRps * (1 - (c.readWriteRatio as number ?? 1))) : 0;
                             if (writeRps > 0 || staleReadCount > 0) {
-                                diagnostics.push(`Write-behind caching: ${staleReadCount} stale reads detected — DB write is async, cache may serve dirty data (DDIA Ch.7)`);
+                                diagnostics.push(`Write-behind caching: ${staleReadCount} stale reads detected — DB write is async, cache may serve dirty data.`);
                             }
                             // Cross-config: downstream DB with serializable isolation is contradictory
                             const outConns = this.connectionsBySource.get(node.id) ?? [];
@@ -2233,7 +2233,7 @@ export class SimulationRunner {
                                 if (dbNode && (dbNode.type === 'database_sql' || dbNode.type === 'database_nosql')) {
                                     const dbConfig = dbNode.specificConfig as Record<string, unknown>;
                                     if ((dbConfig.isolation as string) === 'serializable') {
-                                        diagnostics.push('Write-behind caching with serializable isolation is contradictory — dirty data in cache can violate the isolation contract (DDIA Ch.7)');
+                                        diagnostics.push('Write-behind caching with serializable isolation is contradictory — dirty data in cache can violate the isolation contract.');
                                         break;
                                     }
                                 }
@@ -2399,13 +2399,13 @@ export class SimulationRunner {
                         const outConns = this.connectionsBySource.get(node.id) ?? [];
                         for (const outConn of outConns) {
                             if (this.circuitBreakerState.get(outConn.targetId) === 'open') {
-                                diagnostics.push('CIRCUIT BREAKER OPEN: Downstream failure detected, shedding load to protect dependencies (DDIA Ch.8).');
+                                diagnostics.push('CIRCUIT BREAKER OPEN: Downstream failure detected, shedding load to protect dependencies.');
                             }
                         }
                     }
 
                     if (this.multiDbNoneWarning.has(node.id)) {
-                        diagnostics.push("CRITICAL: Multi-DB write without distributed transaction! Possible data inconsistency (DDIA Ch.7).");
+                        diagnostics.push("CRITICAL: Multi-DB write without distributed transaction! Possible data inconsistency.");
                     }
                     if (this.twoPhaseCoordinatorBlocked.has(node.id)) {
                         diagnostics.push("WARNING: 2PC Coordinator bottleneck detected (lock contention / blocking).");
@@ -2435,11 +2435,11 @@ export class SimulationRunner {
 
                         if (dbModel.syncMode === 'asynchronous') {
                             diagnostics.push(
-                                `Async replication: committed writes may be lost if the leader crashes before replicas catch up (DDIA Ch.5)`
+                                `Async replication: committed writes may be lost if the leader crashes before replicas catch up`
                             );
                             if (dbModel.getStaleReadCount() > 0) {
                                 diagnostics.push(
-                                    `Reads-your-writes not guaranteed: replica lag ~${dbModel.replicationLagMs}ms (DDIA Ch.5 §Reading Your Own Writes)`
+                                    `Reads-your-writes not guaranteed: replica lag ~${dbModel.replicationLagMs}ms`
                                 );
                             }
                         }
@@ -2458,10 +2458,10 @@ export class SimulationRunner {
                         const rps = detail.currentRps ?? 0;
                         const isolation = dbModel.isolationLevel;
                         if (isolation === 'serializable' && rps > 0.7 * cap) {
-                            diagnostics.push(`Serializable isolation detected as throughput bottleneck — consider read-committed + application-level conflict handling (DDIA Ch.7 §Serializability)`);
+                            diagnostics.push(`Serializable isolation detected as throughput bottleneck — consider read-committed + application-level conflict handling.`);
                         }
                         if ((isolation === 'read-committed' || isolation === 'read-uncommitted') && dbModel.replicationMode === 'multi-leader') {
-                            diagnostics.push(`Write skew risk: read-committed isolation with multi-leader replication allows concurrent writes to conflict without detection (DDIA Ch.7)`);
+                            diagnostics.push(`Write skew risk: read-committed isolation with multi-leader replication allows concurrent writes to conflict without detection.`);
                         }
 
                         // Storage engine diagnostics
@@ -2476,13 +2476,13 @@ export class SimulationRunner {
                         if (seType === 'b-tree' && isWriteHeavy) {
                             diagnostics.push(
                                 'B-Trees write in-place. High write amplification at scale can saturate I/O ' +
-                                '— consider LSM-tree engines like RocksDB for write-heavy workloads (DDIA Ch.3 §B-Trees)'
+                                '— consider LSM-tree engines like RocksDB for write-heavy workloads.'
                             );
                         }
                         if (seType === 'lsm-tree' && isReadHeavy && !(dbSe.bloomFilters as boolean)) {
                             diagnostics.push(
                                 'LSM-trees optimize for writes. Reads may check multiple SSTables ' +
-                                '— use bloom filters to reduce unnecessary I/O (DDIA Ch.3 §SSTables and LSM-Trees)'
+                                '— use bloom filters to reduce unnecessary I/O.'
                             );
                         }
 
@@ -2504,7 +2504,7 @@ export class SimulationRunner {
                                 const hotPct = Math.round(hotspotFactorSql * 100);
                                 const latencyMultSql = 1 + hotspotFactorSql * 4;
                                 diagnostics.push(
-                                    `HOT SHARD: ${hotPct}% of traffic on skewed shard — ${latencyMultSql.toFixed(1)}× latency (DDIA Ch.6 §Skewed Workloads)`
+                                    `HOT SHARD: ${hotPct}% of traffic on skewed shard — ${latencyMultSql.toFixed(1)}× latency`
                                 );
                                 detail.isHotShard = true;
                                 detail.hotshardLatencyMultiplier = latencyMultSql;
@@ -2512,9 +2512,9 @@ export class SimulationRunner {
                             if (strategySql === 'hash-based') {
                                 const consistentSql = (shardingSql.consistentHashing as boolean) ?? true;
                                 if (consistentSql) {
-                                    diagnostics.push('Consistent hashing: resharding minimizes key movement (DDIA Ch.6)');
+                                    diagnostics.push('Consistent hashing: resharding minimizes key movement');
                                 } else {
-                                    diagnostics.push('Non-consistent hashing: resharding can cause full key reassignment (DDIA Ch.6)');
+                                    diagnostics.push('Non-consistent hashing: resharding can cause full key reassignment');
                                 }
                             }
                         }
@@ -2550,11 +2550,11 @@ export class SimulationRunner {
 
                         if (dbModel.syncMode === 'asynchronous') {
                             diagnostics.push(
-                                `Async replication: committed writes may be lost if the leader crashes before replicas catch up (DDIA Ch.5)`
+                                `Async replication: committed writes may be lost if the leader crashes before replicas catch up`
                             );
                             if (dbModel.getStaleReadCount() > 0) {
                                 diagnostics.push(
-                                    `Reads-your-writes not guaranteed: replica lag ~${dbModel.replicationLagMs}ms (DDIA Ch.5 §Reading Your Own Writes)`
+                                    `Reads-your-writes not guaranteed: replica lag ~${dbModel.replicationLagMs}ms`
                                 );
                             }
                         }
@@ -2581,13 +2581,13 @@ export class SimulationRunner {
                         if (seTypeN === 'b-tree' && isWriteHeavyN) {
                             diagnostics.push(
                                 'B-Trees write in-place. High write amplification at scale can saturate I/O ' +
-                                '— consider LSM-tree engines like RocksDB for write-heavy workloads (DDIA Ch.3 §B-Trees)'
+                                '— consider LSM-tree engines like RocksDB for write-heavy workloads.'
                             );
                         }
                         if (seTypeN === 'lsm-tree' && isReadHeavyN && !(dbSeN.bloomFilters as boolean)) {
                             diagnostics.push(
                                 'LSM-trees optimize for writes. Reads may check multiple SSTables ' +
-                                '— use bloom filters to reduce unnecessary I/O (DDIA Ch.3 §SSTables and LSM-Trees)'
+                                '— use bloom filters to reduce unnecessary I/O.'
                             );
                         }
 
@@ -2609,7 +2609,7 @@ export class SimulationRunner {
                                 const hotPctNoSql = Math.round(hotspotFactorNoSql * 100);
                                 const latencyMultNoSql = 1 + hotspotFactorNoSql * 4;
                                 diagnostics.push(
-                                    `HOT SHARD: ${hotPctNoSql}% of traffic on skewed shard — ${latencyMultNoSql.toFixed(1)}× latency (DDIA Ch.6 §Skewed Workloads)`
+                                    `HOT SHARD: ${hotPctNoSql}% of traffic on skewed shard — ${latencyMultNoSql.toFixed(1)}× latency`
                                 );
                                 detail.isHotShard = true;
                                 detail.hotshardLatencyMultiplier = latencyMultNoSql;
@@ -2617,9 +2617,9 @@ export class SimulationRunner {
                             if (strategyNoSql === 'hash-based') {
                                 const consistentNoSql = (shardingNoSql.consistentHashing as boolean) ?? true;
                                 if (consistentNoSql) {
-                                    diagnostics.push('Consistent hashing: resharding minimizes key movement (DDIA Ch.6)');
+                                    diagnostics.push('Consistent hashing: resharding minimizes key movement');
                                 } else {
-                                    diagnostics.push('Non-consistent hashing: resharding can cause full key reassignment (DDIA Ch.6)');
+                                    diagnostics.push('Non-consistent hashing: resharding can cause full key reassignment');
                                 }
                             }
                         }
@@ -2638,13 +2638,13 @@ export class SimulationRunner {
                             if (w + r <= n) {
                                 diagnostics.push(
                                     `Quorum condition not met (w=${w} + r=${r} = ${w + r} ≤ n=${n}) — ` +
-                                    `stale reads possible even without failures (DDIA Ch.5 §Quorums). ` +
+                                    `stale reads possible even without failures. ` +
                                     `Fix: increase r to ${n - w + 1} (w + r = ${w + (n - w + 1)} > n = ${n})`
                                 );
                             } else {
                                 diagnostics.push(
                                     `Quorum condition met (w=${w} + r=${r} = ${w + r} > n=${n}) — ` +
-                                    `reads are linearizable (DDIA Ch.5 §Quorums)`
+                                    `reads are linearizable`
                                 );
                             }
 
@@ -2653,7 +2653,7 @@ export class SimulationRunner {
                             if (instances < majority) {
                                 diagnostics.push(
                                     `Quorum majority at risk — only ${instances} of ${n} nodes available. ` +
-                                    `Writes may not reach quorum (DDIA Ch.5 §Quorums)`
+                                    `Writes may not reach quorum`
                                 );
                             }
 
@@ -2721,7 +2721,7 @@ export class SimulationRunner {
                             detail.diagnostics = detail.diagnostics ?? [];
                             detail.diagnostics.push(
                                 'Consumer restarted — replaying uncommitted messages (at-least-once delivery). ' +
-                                'Downstream consumers must be idempotent (DDIA Ch.11 §Consumer Offsets)'
+                                'Downstream consumers must be idempotent'
                             );
                         }
                     }
@@ -2731,7 +2731,7 @@ export class SimulationRunner {
                         detail.diagnostics = detail.diagnostics ?? [];
                         detail.diagnostics.push(
                             'at-least-once delivery: downstream consumers must handle duplicate messages ' +
-                            'idempotently (DDIA Ch.11)'
+                            'idempotently'
                         );
                     }
 
@@ -2791,7 +2791,7 @@ export class SimulationRunner {
                     || (this.connectionsByTarget.get(node.id)?.length ?? 0) > 0;
                 if (instances <= 1 && hasConns) {
                     detail.diagnostics = detail.diagnostics ?? [];
-                    detail.diagnostics.push('Single-instance node — SPOF: no redundancy. Consider adding replicas. (DDIA Ch.1)');
+                    detail.diagnostics.push('Single-instance node — SPOF: no redundancy. Consider adding replicas.');
                 }
             }
 
