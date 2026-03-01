@@ -1,5 +1,5 @@
 import { SimulationRunner } from './src/lib/simulation/SimulationRunner';
-import { COMPONENT_CATALOG } from './src/lib/simulation/catalog';
+import { COMPONENT_CATALOG } from './src/lib/data/componentCatalog';
 
 // TC-008 Topology
 const nodes = [
@@ -10,17 +10,17 @@ const nodes = [
     },
     {
         id: 'app1', type: 'app_server', name: 'App Server', x: 200, y: 0,
-        sharedConfig: { ...COMPONENT_CATALOG.find(c => c.id === 'app_server')!.defaultSharedConfig, scaling: { instances: 1 } },
+        sharedConfig: { ...COMPONENT_CATALOG.find(c => c.type === 'app_server')!.defaultSharedConfig, scaling: { instances: 1 } },
         specificConfig: {}
     },
     {
         id: 'cache1', type: 'cache', name: 'Cache', x: 400, y: 0,
-        sharedConfig: { ...COMPONENT_CATALOG.find(c => c.id === 'cache')!.defaultSharedConfig },
+        sharedConfig: { ...COMPONENT_CATALOG.find(c => c.type === 'cache')!.defaultSharedConfig },
         specificConfig: { writeStrategy: 'write-behind', writeBehindDelayMs: 500, defaultTtl: 3600 }
     },
     {
         id: 'db1', type: 'database_sql', name: 'Database', x: 600, y: 0,
-        sharedConfig: { ...COMPONENT_CATALOG.find(c => c.id === 'database_sql')!.defaultSharedConfig, scaling: { instances: 1 } },
+        sharedConfig: { ...COMPONENT_CATALOG.find(c => c.type === 'database_sql')!.defaultSharedConfig, scaling: { instances: 1 } },
         specificConfig: {}
     },
 ];
