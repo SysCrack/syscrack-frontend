@@ -83,6 +83,11 @@ export interface ResilienceConfig {
     circuitBreaker: boolean;
     automaticRetries: boolean;
     retryBackoff?: 'fixed' | 'exponential';
+    healthCheck?: {
+        enabled?: boolean;
+        intervalSeconds?: number;
+        failoverDelayMs?: number;
+    };
 }
 
 export interface TrafficControlConfig {
@@ -96,6 +101,9 @@ export interface ChaosConfig {
     nodeFailure?: boolean;
     loadSpikeMultiplier?: number;
     networkPartition?: boolean;
+    cacheFlush?: boolean;
+    resourceExhaustion?: boolean;
+    databaseLock?: boolean;
 }
 
 export interface SharedConfig {
@@ -108,7 +116,36 @@ export interface SharedConfig {
     chaos?: ChaosConfig;
 }
 
+export interface ReplicationConfig {
+    mode: 'single-leader' | 'multi-leader' | 'leaderless';
+    syncMode: 'synchronous' | 'asynchronous' | 'semi-synchronous';
+    replicationLagMs: number;
+    lagVarianceMs: number;
+    catchUpOnFailover?: boolean; // TC-042
+}
+
+export interface QuorumConfig {
+    n: number;
+    w: number;
+    r: number;
+}
+
+export interface ShardingConfig {
+    enabled: boolean;
+    strategy: 'range-based' | 'hash-based' | 'directory-based';
+    shardKey: string;
+    shardCount: number;
+    consistentHashing: boolean;
+    hotspotFactor: number;
+}
+
 // ============ Component-Specific Configs ============
+
+export interface StorageEngineConfig {
+    type: 'b-tree' | 'lsm-tree';
+    bloomFilters: boolean;           // LSM only — reduces read amplification
+    compactionStrategy: 'size-tiered' | 'leveled'; // LSM only
+}
 
 export interface CDNSpecificConfig {
     cacheTtl: number;
@@ -152,11 +189,19 @@ export interface DatabaseSQLSpecificConfig {
     instanceType: 'small' | 'medium' | 'large' | 'xlarge';
     readReplicas: number;
     connectionPooling: boolean;
+    replication?: ReplicationConfig;
+    isolation?: 'read-uncommitted' | 'read-committed' | 'repeatable-read' | 'serializable';
+    storageEngine?: StorageEngineConfig;
+    sharding?: ShardingConfig;
 }
 
 export interface DatabaseNoSQLSpecificConfig {
     engine: 'dynamodb' | 'mongodb' | 'cassandra';
     consistencyLevel: 'eventual' | 'strong';
+    replication?: ReplicationConfig;
+    quorum?: QuorumConfig;
+    storageEngine?: StorageEngineConfig;
+    sharding?: ShardingConfig;
 }
 
 export interface ObjectStoreSpecificConfig {

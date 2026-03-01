@@ -101,6 +101,7 @@ function TraceEventRow({ event, isLast, depth }: { event: RequestTraceEvent; isL
                     <span>tick {event.timestamp}</span>
                     {event.latencyMs != null && <span style={{ color: '#a78bfa' }}>{event.latencyMs}ms</span>}
                     {event.readWrite && <span style={{ color: rwColor }}>{event.readWrite}</span>}
+                    {event.staleRead === true && <span style={{ color: '#eab308', fontSize: 11, marginLeft: 4 }}>[stale read]</span>}
                 </div>
             </div>
         </div>
