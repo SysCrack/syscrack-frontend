@@ -108,6 +108,25 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
         },
         applicableLayers: { scaling: true, consistency: false, resilience: true, trafficControl: false, sharding: false },
     },
+    {
+        type: 'worker',
+        label: 'Worker',
+        icon: '⚙️',
+        category: 'compute',
+        priority: 'p2',
+        description: 'Async task worker consuming jobs from a message queue',
+        defaultSharedConfig: { ...withScaling(2, 400), resilience: { circuitBreaker: false, automaticRetries: false } },
+        defaultSpecificConfig: {
+            instanceType: 'medium',
+            processingTimeMs: 50,
+            jobType: 'io-bound',
+            autoScaling: false,
+            minInstances: 1,
+            maxInstances: 10,
+            maxRetries: 3,
+        },
+        applicableLayers: { scaling: true, consistency: false, resilience: true, trafficControl: false, sharding: false },
+    },
 
     // ── Storage ───────────────────────────────────
     {

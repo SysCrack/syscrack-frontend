@@ -20,7 +20,7 @@ import { methodToReadWrite, PAYLOAD_LATENCY_MULTIPLIER } from './types';
 import { classifyEdges, EdgeSemantics, ChaosPolicy, isMultiDBWrite } from './TopologyInference';
 import { MessageQueueModel } from './models/MessageQueueModel';
 import { LoadBalancerModel } from './models/LoadBalancerModel';
-import { CacheModel } from './models/CacheModel';
+import { CacheModel, WorkerModel } from './models';
 import { DBReplicationModel } from './models/DatabaseModel';
 
 // ── Cache entry simulator (bounded entries, eviction by policy) ──
@@ -251,6 +251,9 @@ export class SimulationRunner {
     public mqProcessAccumulator = new Map<string, number>(); // Stores fractional processed messages to emit
     public previousNodeFailure = new Map<string, boolean>(); // Tracks node fail state for MQ at-least-once replay
 
+    // Workers
+    public workerModels = new Map<string, WorkerModel>();
+
     // API Gateway: allowance per step (reset each step), dropped cumulative
     private apiGatewayAllowanceRemaining: Map<string, number> = new Map();
     private apiGatewayDropped: Map<string, number> = new Map();
@@ -360,6 +363,9 @@ export class SimulationRunner {
             if (node.type === 'database_sql' || node.type === 'database_nosql') {
                 this.dbModels.set(node.id, new DBReplicationModel(node));
             }
+            if (node.type === 'worker') {
+                this.workerModels.set(node.id, new WorkerModel(node));
+            }
         }
         for (const conn of this.connections) {
             this.connectionMap.set(conn.id, conn);
@@ -419,6 +425,7 @@ export class SimulationRunner {
         this.mqModels.clear(); // Clear the MessageQueueModels
         this.mqProcessAccumulator.clear();
         this.previousNodeFailure.clear();
+        this.workerModels.clear();
 
         this.apiGatewayAllowanceRemaining.clear();
         this.apiGatewayDropped.clear();
@@ -481,6 +488,9 @@ export class SimulationRunner {
             }
             if (node.type === 'api_gateway') {
                 this.apiGatewayDropped.set(node.id, 0);
+            }
+            if (node.type === 'worker') {
+                this.workerModels.set(node.id, new WorkerModel(node));
             }
         }
         nextParticleId = 0;
@@ -663,12 +673,17 @@ export class SimulationRunner {
             const tickDurationMs = 100 / this.speed;
             dbModel.tickCompaction(this.tick, tickDurationMs);
         }
-        // Reset API Gateway allowance this step (rate limit per second -> per dt)
+        // Reset/accumulate API Gateway allowance this step (token bucket: rate limit per second -> tokens per dt)
         for (const node of this.nodes) {
             if (node.type === 'api_gateway') {
                 const tc = node.sharedConfig.trafficControl;
                 const limit = (tc?.rateLimiting && typeof tc.rateLimit === 'number') ? tc.rateLimit : 10000;
-                this.apiGatewayAllowanceRemaining.set(node.id, limit * (cappedDt / 1000));
+                const increment = limit * (cappedDt / 1000);
+                const prevAllowance = this.apiGatewayAllowanceRemaining.get(node.id) ?? 0;
+                // Cap bucket to allow short bursts but prevent unbounded growth
+                const maxBucket = limit * 2;
+                const nextAllowance = Math.min(maxBucket, prevAllowance + increment);
+                this.apiGatewayAllowanceRemaining.set(node.id, nextAllowance);
             }
         }
 
@@ -725,17 +740,28 @@ export class SimulationRunner {
             // Find downstream consumers to determine pulling capacity
             const outEdges = this.connectionsBySource.get(node.id) ?? [];
             let totalConsumerCapacity = 0;
+            let workerPerGroupThroughput = 0;
             for (const edge of outEdges) {
                 const consumer = this.nodeMap.get(edge.targetId);
                 if (consumer && consumer.type !== 'object_store' && consumer.type !== 'database_sql' && consumer.type !== 'database_nosql') {
                     // This is a simplification: assuming all non-storage downstream nodes are active consumers pulling from the queue.
-                    const rawCap = (consumer.sharedConfig.scaling?.nodeCapacityRps as number ?? 1000) * (consumer.sharedConfig.scaling?.instances as number ?? 1);
-                    totalConsumerCapacity += rawCap;
+                    if (consumer.type === 'worker') {
+                        // Per-group throughput for workers is based on replicas × (1000 / processingTimeMs)
+                        const cWorker = consumer.specificConfig as Record<string, unknown>;
+                        const replicas = consumer.sharedConfig.scaling?.instances ?? 1;
+                        const processingTimeMs = (cWorker.processingTimeMs as number) ?? 50;
+                        workerPerGroupThroughput += replicas * (1000 / Math.max(processingTimeMs, 1));
+                    } else {
+                        const rawCap =
+                            ((consumer.sharedConfig.scaling?.nodeCapacityRps as number) ?? 1000) *
+                            ((consumer.sharedConfig.scaling?.instances as number) ?? 1);
+                        totalConsumerCapacity += rawCap;
+                    }
                 }
             }
 
             // Fallback: If no consumers connected yet, consumerThroughput is 0 (queue builds up)
-            const consumerThroughput = totalConsumerCapacity;
+            const consumerThroughput = totalConsumerCapacity + workerPerGroupThroughput;
 
             // Allow specific config to override consumerGroupCount
             const sc = node.sharedConfig as any;
@@ -764,9 +790,25 @@ export class SimulationRunner {
             }
 
             // Apply exactly-once throughput reduction (15% overhead for txn coordination)
-            const effectiveConsumerThroughput = guarantee === 'exactly-once'
+            let effectiveConsumerThroughput = guarantee === 'exactly-once'
                 ? consumerThroughput * 0.85
                 : consumerThroughput;
+
+            // When draining to Workers, cap MQ drain rate by Worker capacity.
+            // MQ consumer throughput remains the primary constraint; Worker capacity further limits it only if lower.
+            let totalWorkerThroughput = 0;
+            for (const edge of outEdges) {
+                const consumer = this.nodeMap.get(edge.targetId);
+                if (consumer?.type === 'worker') {
+                    const workerModel = this.workerModels.get(consumer.id);
+                    if (workerModel) {
+                        totalWorkerThroughput += workerModel.getEffectiveThroughput();
+                    }
+                }
+            }
+            if (totalWorkerThroughput > 0) {
+                effectiveConsumerThroughput = Math.min(effectiveConsumerThroughput, totalWorkerThroughput);
+            }
 
             const processed = mqModel.dequeue(effectiveConsumerThroughput * (cappedDt / 1000), consumerGroupCount);
 
@@ -1827,7 +1869,20 @@ export class SimulationRunner {
 
         // Add latency (node processing + protocol overhead + payload + write overhead)
         const protocolOverhead = conn ? (PROTOCOL_FACTORS[conn.protocol]?.overheadMs ?? 0) : 0;
-        let latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
+        let latency: number;
+
+        if (targetNode.type === 'worker') {
+            const workerModel = this.workerModels.get(targetNode.id);
+            const tickDurationMs = 100 / this.speed;
+            const queueDepth = this.getUpstreamMQQueueDepth(targetNode.id);
+            const processingLatency = workerModel?.getProcessingLatencyMs(queueDepth, tickDurationMs) ?? 50;
+            latency = processingLatency + protocolOverhead;
+            if (workerModel) {
+                workerModel.recordTask(processingLatency);
+            }
+        } else {
+            latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
+        }
 
         // --- DISTRIBUTED TRANSACTIONS: 2PC / Saga Overhead (Task 3) ---
         if (currRw === 'write') {
@@ -2131,6 +2186,20 @@ export class SimulationRunner {
         if (downstreamTypes.has('object_store')) return 'blob';
         if (upstreamTypes.has('cache')) return 'l2';
         return 'backend';
+    }
+
+    private getUpstreamMQQueueDepth(nodeId: string): number {
+        const inbound = this.connectionsByTarget.get(nodeId) ?? [];
+        for (const conn of inbound) {
+            const sourceNode = this.nodeMap.get(conn.sourceId);
+            if (sourceNode?.type === 'message_queue') {
+                const mqModel = this.mqModels.get(sourceNode.id);
+                if (mqModel) {
+                    return mqModel.getQueueDepth();
+                }
+            }
+        }
+        return 0;
     }
 
     private getCacheHitRate(node: CanvasNode): number {
@@ -2857,6 +2926,51 @@ export class SimulationRunner {
                         deadLettered: 0,
                         droppedMessages: mqModel?.droppedMessages ?? 0,
                         deliveryGuarantee: mqGuarantee,
+                    };
+                    break;
+                }
+                case 'worker': {
+                    const workerModel = this.workerModels.get(node.id);
+                    const incomingRps = this.nodeRpsEma.get(node.id) ?? 0;
+                    const mqQueueDepth = this.getUpstreamMQQueueDepth(node.id);
+                    const throughput = workerModel?.getEffectiveThroughput() ?? 0;
+                    const utilizationPct = workerModel?.getUtilizationPct(incomingRps) ?? 0;
+                    const activeWorkers = workerModel?.getActiveWorkers(incomingRps) ?? 0;
+                    const avgLatency = workerModel?.getAverageProcessingLatencyMs() ?? 0;
+                    const isSaturated = workerModel?.isSaturated(incomingRps) ?? false;
+                    const processingTimeMs = (c.processingTimeMs as number) ?? 50;
+                    const jobType = (c.jobType as string) ?? 'io-bound';
+
+                    const diagnostics: string[] = detail.diagnostics ?? [];
+
+                    if (isSaturated) {
+                        diagnostics.push(
+                            `Worker saturated: processing ~${Math.round(incomingRps)} tasks/s but capacity is ~${Math.round(throughput)} tasks/s. ` +
+                            `Increase replicas or reduce processingTimeMs to drain the queue faster (DDIA Ch.11: Consumer Lag).`,
+                        );
+                    }
+
+                    if (mqQueueDepth > 0) {
+                        diagnostics.push(
+                            `Consumer lag building: MQ queue depth ≈ ${Math.round(mqQueueDepth)} tasks. ` +
+                            `Producer is outpacing Worker throughput.`,
+                        );
+                    }
+
+                    if (diagnostics.length > 0) {
+                        detail.diagnostics = diagnostics;
+                    }
+
+                    detail.componentDetail = {
+                        kind: 'worker',
+                        tasksProcessed: workerModel?.tasksProcessed ?? 0,
+                        throughputRps: Math.round(throughput),
+                        utilizationPct: Math.round(utilizationPct * 100),
+                        activeWorkers,
+                        avgProcessingLatencyMs: Math.round(avgLatency),
+                        isSaturated,
+                        jobType,
+                        processingTimeMs,
                     };
                     break;
                 }

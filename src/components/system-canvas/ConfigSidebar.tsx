@@ -34,6 +34,10 @@ const SPECIFIC_CONFIG_ENUMS: Partial<Record<string, Record<string, string[]>>> =
         distributedTransaction: ['none', 'two-phase-commit', 'saga'],
         sagaCompensation: ['choreography', 'orchestration'],
     },
+    worker: {
+        instanceType: ['small', 'medium', 'large', 'xlarge'],
+        jobType: ['cpu-bound', 'io-bound', 'mixed'],
+    },
 };
 
 export default function ConfigSidebar() {

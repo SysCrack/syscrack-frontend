@@ -1482,9 +1482,83 @@ function runTC012(): QaResult {
     return { id: 'TC-012', name: 'Object Store — Glacier Cold Read', passed: false, failures: ['BLOCKED: Object Store glacier restore latency not modeled (deferred 4g)'] };
 }
 
-// BLOCKED: requires Worker P2 component
 function runTC021(): QaResult {
-    return { id: 'TC-021', name: 'Async Write Path with MQ + Worker', passed: false, failures: ['BLOCKED: Worker P2 component not implemented'] };
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, {
+            specific: { requestsPerSecond: 200, readWriteRatio: 0.0 }, // all writes
+        }),
+        makeNode('gw1', 'api_gateway', 'API GW', 150, 0, {
+            shared: { trafficControl: { rateLimiting: true, rateLimit: 300, rateLimitStrategy: 'token-bucket' } },
+        }),
+        makeNode('app1', 'app_server', 'App Server', 300, 0),
+        makeNode('mq1', 'message_queue', 'MQ', 450, 0, {
+            specific: {
+                deliveryGuarantee: 'at-least-once',
+                consumerGroupCount: 2,
+                backpressure: 'block',
+            },
+        }),
+        makeNode('w1', 'worker', 'Worker', 600, 0, {
+            shared: { scaling: { instances: 2, nodeCapacityRps: 400 } },
+            specific: {
+                instanceType: 'medium',
+                processingTimeMs: 50,
+                jobType: 'io-bound',
+                autoScaling: false,
+                minInstances: 1,
+                maxInstances: 10,
+                maxRetries: 3,
+            },
+        }),
+        makeNode('db1', 'database_sql', 'Database', 750, 0, {
+            specific: { isolation: 'read-committed' },
+        }),
+    ];
+
+    const connections = [
+        makeConnection('c1-gw', 'c1', 'gw1'),
+        makeConnection('gw-app', 'gw1', 'app1'),
+        makeConnection('app-mq', 'app1', 'mq1'),
+        makeConnection('mq-worker', 'mq1', 'w1'),
+        makeConnection('worker-db', 'w1', 'db1'),
+    ];
+
+    const metrics = runSim(nodes, connections, 200);
+    const failures: string[] = [];
+
+    // API GW should not be dropping requests (headroom 300 RPS vs 200 RPS load)
+    const gwDetail = metrics.nodeMetrics['gw1']?.componentDetail as any;
+    const allowed = gwDetail?.allowed ?? 0;
+    const dropped = gwDetail?.dropped ?? 0;
+    if (dropped > 0) {
+        failures.push(`API Gateway dropped ${dropped} messages, expected 0 with rateLimit 300 RPS and producer 200 RPS`);
+    }
+    if (allowed < 180) {
+        failures.push(`API Gateway allowed only ${allowed} messages, expected close to 200`);
+    }
+
+    // MQ should be buffering: queue depth should grow because producer (200) > consumer drain (80)
+    const mqQueueDepth = metrics.nodeMetrics['mq1']?.queueDepth ?? 0;
+    if (mqQueueDepth <= 0) {
+        failures.push(`MQ queue depth was ${mqQueueDepth}, expected > 0 (producer outpaces Worker drain)`);
+    }
+
+    // MQ diagnostics should mention consumer lag
+    const mqDiagnostics = (metrics.nodeMetrics['mq1']?.diagnostics ?? []) as string[];
+    const hasLagDiag = mqDiagnostics.some((d: string) =>
+        d.toLowerCase().includes('lag') || d.toLowerCase().includes('consumer'),
+    );
+    if (!hasLagDiag) {
+        failures.push('MQ missing consumer lag diagnostic for Worker consumer');
+    }
+
+    // DB should see writes downstream of Worker (non-zero RPS)
+    const dbRps = metrics.nodeMetrics['db1']?.currentRps ?? 0;
+    if (dbRps <= 0) {
+        failures.push(`DB RPS was ${dbRps}, expected > 0 (writes flowing through Worker)`);
+    }
+
+    return { id: 'TC-021', name: 'Async Write Path with MQ + Worker', passed: failures.length === 0, failures };
 }
 
 // BLOCKED: requires CDC Connector

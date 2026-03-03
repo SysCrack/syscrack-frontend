@@ -357,6 +357,31 @@ function ClientDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'client' 
     );
 }
 
+function WorkerDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'worker' }> }) {
+    return (
+        <>
+            <Section title="Throughput">
+                <Row label="Capacity" value={`${d.throughputRps} tasks/s`} />
+                <Row label="Processed" value={d.tasksProcessed} />
+            </Section>
+            <Section title="Utilization">
+                <UtilizationBar value={d.utilizationPct / 100} label="Worker utilization" />
+                <Row label="Active workers" value={d.activeWorkers} />
+            </Section>
+            <Section title="Latency">
+                <Row label="Avg processing" value={`${d.avgProcessingLatencyMs}ms`} />
+                <Row label="Job type" value={d.jobType} />
+                <Row label="Base processing" value={`${d.processingTimeMs}ms`} />
+                {d.isSaturated && (
+                    <div style={{ fontSize: 11, color: '#f87171', marginTop: 4 }}>
+                        ⚠ Saturated — queue is growing; add replicas or reduce processing time.
+                    </div>
+                )}
+            </Section>
+        </>
+    );
+}
+
 // ── Main component ──
 
 interface LiveComponentInspectorProps {
@@ -449,6 +474,7 @@ export default function LiveComponentInspector({ nodeId }: LiveComponentInspecto
                     {detail.componentDetail.kind === 'object_store' && <ObjectStoreDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'api_gateway' && <APIGatewayDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'client' && <ClientDetail d={detail.componentDetail} />}
+                    {detail.componentDetail.kind === 'worker' && <WorkerDetail d={detail.componentDetail} />}
                 </>
             )}
 

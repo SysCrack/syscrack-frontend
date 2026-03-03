@@ -184,6 +184,16 @@ export interface AppServerSpecificConfig {
     maxInstances?: number;
 }
 
+export interface WorkerSpecificConfig {
+    instanceType: 'small' | 'medium' | 'large' | 'xlarge';
+    processingTimeMs: number;
+    jobType: 'cpu-bound' | 'io-bound' | 'mixed';
+    autoScaling: boolean;
+    minInstances: number;
+    maxInstances: number;
+    maxRetries: number;
+}
+
 export interface CacheSpecificConfig {
     engine: 'redis' | 'memcached';
     maxMemory: '256MB' | '1GB' | '4GB' | '16GB';
@@ -234,6 +244,7 @@ export type ComponentSpecificConfig =
     | ProxySpecificConfig
     | APIGatewaySpecificConfig
     | AppServerSpecificConfig
+    | WorkerSpecificConfig
     | CacheSpecificConfig
     | DatabaseSQLSpecificConfig
     | DatabaseNoSQLSpecificConfig
