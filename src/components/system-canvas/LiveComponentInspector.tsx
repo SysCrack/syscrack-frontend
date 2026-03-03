@@ -146,6 +146,25 @@ function ProxyDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'proxy' }>
                 <Row label="Connection pooling" value={d.connectionPooling ? 'On' : 'Off'} />
                 <Row label="Max connections" value={d.maxConnections} />
             </Section>
+            {d.poolSize != null && (
+                <Section title="Pool">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10 }}>
+                        <span style={{ color: '#94a3b8' }}>Connections</span>
+                        <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>
+                            {d.activeConnections ?? 0}/{d.effectivePoolSize ?? d.poolSize}
+                            {d.effectivePoolSize != null && d.effectivePoolSize < (d.poolSize ?? 0) ? ' ⚠️' : ''}
+                        </span>
+                    </div>
+                </Section>
+            )}
+            {(d.queueDepth ?? 0) > 0 && (
+                <Section title="Queue">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10 }}>
+                        <span style={{ color: '#fb923c' }}>Queue depth</span>
+                        <span style={{ color: '#fed7aa', fontFamily: 'monospace' }}>{d.queueDepth}</span>
+                    </div>
+                </Section>
+            )}
             <Section title="Backends">
                 {d.backends.map((b) => (
                     <div key={b.nodeId} style={{ padding: '6px 0', borderBottom: '1px solid #2a3244' }}>

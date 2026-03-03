@@ -241,6 +241,9 @@ export class SimulationRunner {
     private lbSentRequests: Map<string, Map<string, number>> = new Map();
     // Proxy: requests sent per backend (nodeId -> targetId -> count) — separate from LB to avoid naming confusion
     private proxySentRequests: Map<string, Map<string, number>> = new Map();
+    // Proxy: connection pool + queue state
+    private proxyActiveConnections: Map<string, number> = new Map();
+    private proxyQueueDepth: Map<string, number> = new Map();
 
     // Message Queue State
     // Rather than raw Maps, we store MessageQueueModel instances
@@ -345,6 +348,8 @@ export class SimulationRunner {
             }
             if (node.type === 'proxy') {
                 this.proxySentRequests.set(node.id, new Map());
+                this.proxyActiveConnections.set(node.id, 0);
+                this.proxyQueueDepth.set(node.id, 0);
             }
             if (node.type === 'message_queue') {
                 this.mqModels.set(node.id, new MessageQueueModel(node));
@@ -409,6 +414,8 @@ export class SimulationRunner {
         this.cacheFlushAppliedAtTick.clear();
         this.lbSentRequests.clear();
         this.proxySentRequests.clear();
+        this.proxyActiveConnections.clear();
+        this.proxyQueueDepth.clear();
         this.mqModels.clear(); // Clear the MessageQueueModels
         this.mqProcessAccumulator.clear();
         this.previousNodeFailure.clear();
@@ -466,6 +473,8 @@ export class SimulationRunner {
             if (node.type === 'proxy') {
                 this.proxySentRequests.set(node.id, new Map());
                 this.lbModels.set(node.id, new LoadBalancerModel(node));
+                this.proxyActiveConnections.set(node.id, 0);
+                this.proxyQueueDepth.set(node.id, 0);
             }
             if (node.type === 'message_queue') {
                 this.mqModels.set(node.id, new MessageQueueModel(node));
@@ -1673,6 +1682,75 @@ export class SimulationRunner {
             (this.nodeRequestCount.get(particle.targetId) ?? 0) + particle.count,
         );
 
+        // ── Proxy connection pool & queueing (TC-044) ──
+        if (targetNode.type === 'proxy') {
+            const proxySpecific = targetNode.specificConfig as Record<string, unknown>;
+            let poolSize = (proxySpecific.connectionPoolSize as number) ?? 20;
+            const waitTimeoutMs = (proxySpecific.waitTimeoutMs as number) ?? 100;
+            const maxQueueDepth = (proxySpecific.maxQueueDepth as number) ?? 50;
+
+            // Resource exhaustion chaos halves the effective pool
+            const isExhausted = !!targetNode.sharedConfig.chaos?.resourceExhaustion;
+            if (isExhausted) {
+                poolSize = Math.max(1, Math.floor(poolSize / 2));
+            }
+
+            // Effective capacity: poolSize connections × (1000ms / avgLatencyMs) req/s
+            // Each connection handles ~20 req/s at 50ms per query
+            const connectionLatencyMs = 50;
+            const effectiveCapacityRps = poolSize * (1000 / connectionLatencyMs);
+
+            // Current load: use this node's incoming RPS (EMA)
+            const incomingRps = this.nodeRpsEma.get(targetNode.id) ?? 0;
+
+            // Approximate tick duration in ms (aligned with other tickDurationMs usages)
+            const cappedDt = 100 / this.speed;
+
+            if (incomingRps > effectiveCapacityRps) {
+                // Pool exhausted — requests queue
+                const overflow = incomingRps - effectiveCapacityRps;
+                const currentQueue = this.proxyQueueDepth.get(targetNode.id) ?? 0;
+                const newQueue = Math.min(
+                    maxQueueDepth,
+                    currentQueue + overflow * (cappedDt / 1000),
+                );
+                this.proxyQueueDepth.set(targetNode.id, newQueue);
+
+                // Queued requests that exceed waitTimeoutMs -> errors (modeled via queue fill ratio)
+                if (newQueue >= maxQueueDepth * 0.5) {
+                    const errorFraction = Math.min(1, newQueue / maxQueueDepth);
+                    const additionalErrors = Math.floor(
+                        overflow * errorFraction * (cappedDt / 1000),
+                    );
+                    if (additionalErrors > 0) {
+                        this.nodeErrorCount.set(
+                            targetNode.id,
+                            (this.nodeErrorCount.get(targetNode.id) ?? 0) + additionalErrors,
+                        );
+                        this.nodeTickErrors.set(
+                            targetNode.id,
+                            (this.nodeTickErrors.get(targetNode.id) ?? 0) + additionalErrors,
+                        );
+                    }
+                }
+            } else {
+                // Load within capacity — drain queue gradually
+                const currentQueue = this.proxyQueueDepth.get(targetNode.id) ?? 0;
+                const drainRate = (effectiveCapacityRps - incomingRps) * (cappedDt / 1000);
+                this.proxyQueueDepth.set(
+                    targetNode.id,
+                    Math.max(0, currentQueue - drainRate),
+                );
+            }
+
+            // Estimate active connections from current load
+            const estimatedActive = Math.min(
+                poolSize,
+                Math.floor((incomingRps * connectionLatencyMs) / 1000),
+            );
+            this.proxyActiveConnections.set(targetNode.id, estimatedActive);
+        }
+
         // Check if target can handle the load using current RPS vs capacity
         const capacity = this.getNodeCapacity(targetNode);
         const currentLoadRps = this.nodeRpsEma.get(particle.targetId) ?? 0;
@@ -2343,6 +2421,13 @@ export class SimulationRunner {
                     }
                     const sentMap = this.proxySentRequests.get(node.id);
 
+                    const queueDepth = this.proxyQueueDepth.get(node.id) ?? 0;
+                    const activeConnections = this.proxyActiveConnections.get(node.id) ?? 0;
+                    const proxySpecific = node.specificConfig as Record<string, unknown>;
+                    const poolSize = (proxySpecific.connectionPoolSize as number) ?? 20;
+                    const isExhausted = !!node.sharedConfig.chaos?.resourceExhaustion;
+                    const effectivePool = isExhausted ? Math.max(1, Math.floor(poolSize / 2)) : poolSize;
+
                     const backends = (this.adjacency.get(node.id) ?? []).map((targetId) => {
                         const targetNode = this.nodeMap.get(targetId);
 
@@ -2381,12 +2466,39 @@ export class SimulationRunner {
                             activeConnections: this.nodeActiveCount.get(targetId) ?? 0,
                         };
                     });
+
+                    detail.queueDepth = Math.round(queueDepth);
+                    detail.activeConnections = activeConnections;
+                    detail.effectivePoolSize = effectivePool;
+                    detail.poolSize = poolSize;
+
+                    const diagnostics: string[] = detail.diagnostics ?? [];
+                    if (isExhausted) {
+                        diagnostics.push(
+                            `Resource exhaustion: connection pool halved (${effectivePool}/${poolSize} connections). ` +
+                            `Effective capacity reduced — requests queuing (DDIA Ch.1 §Connection Pooling)`,
+                        );
+                    }
+                    if (queueDepth > 0) {
+                        diagnostics.push(
+                            `Queue depth: ${Math.round(queueDepth)} requests waiting. ` +
+                            `Pool exhaustion causes latency spikes and timeout errors`,
+                        );
+                    }
+                    if (diagnostics.length > 0) {
+                        detail.diagnostics = diagnostics;
+                    }
+
                     detail.componentDetail = {
                         kind: 'proxy',
                         algorithm: (c.algorithm as string) ?? 'round-robin',
                         connectionPooling: (c.connectionPooling as boolean) ?? true,
                         maxConnections: (c.maxConnections as number) ?? 500,
                         backends,
+                        queueDepth: Math.round(queueDepth),
+                        activeConnections,
+                        effectivePoolSize: effectivePool,
+                        poolSize,
                     };
                     break;
                 }

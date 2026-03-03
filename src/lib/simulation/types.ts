@@ -82,7 +82,17 @@ export type ComponentDetailData =
     | { kind: 'cache'; hitRate: number; hits: number; misses: number; entries: CacheEntry[]; evictionPolicy: string; readStrategy: string; writeStrategy: string; ttl: number; maxEntries: number; placement?: CachePlacement; staleReadCount?: number }
     | { kind: 'cdn'; hitRate: number; hits: number; misses: number; edgeLocations: number; ttl: number }
     | { kind: 'load_balancer'; algorithm: string; backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[] }
-    | { kind: 'proxy'; algorithm: string; connectionPooling: boolean; maxConnections: number; backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[] }
+    | {
+        kind: 'proxy';
+        algorithm: string;
+        connectionPooling: boolean;
+        maxConnections: number;
+        backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[];
+        queueDepth?: number;
+        activeConnections?: number;
+        effectivePoolSize?: number;
+        poolSize?: number;
+    }
     | { kind: 'app_server'; activeInstances: number; maxInstances: number; autoScaling: boolean; instanceType: string; distributedTransaction?: string; sagaCompensation?: string }
     | { kind: 'database_sql'; engine: string; readCapacity: number; writeCapacity: number; readReplicas: number; connectionPooling: boolean; activeConnections: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number }
     | { kind: 'database_nosql'; engine: string; consistencyLevel: string; capacity: number; utilization: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; quorumConditionMet?: boolean; quorumSummary?: string; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number }
@@ -101,6 +111,9 @@ export interface NodeDetailMetrics extends NodeSimSummary {
     hits?: number;
     misses?: number;
     queueDepth?: number;
+    activeConnections?: number;
+    effectivePoolSize?: number;
+    poolSize?: number;
     replicationLagMs?: number;
     staleReadCount?: number;
     writeErrorRate?: number;

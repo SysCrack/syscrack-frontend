@@ -161,6 +161,16 @@ export interface LoadBalancerSpecificConfig {
     backendWeights?: Record<string, number>;
 }
 
+export interface ProxySpecificConfig {
+    algorithm: 'round-robin' | 'least-connections' | 'ip-hash' | 'weighted';
+    connectionPooling: boolean;
+    maxConnections: number;
+    healthCheckInterval: number;
+    connectionPoolSize: number;  // max simultaneous downstream connections
+    waitTimeoutMs: number;       // ms before queued request errors
+    maxQueueDepth: number;       // max requests that can wait before hard error
+}
+
 export interface APIGatewaySpecificConfig {
     authEnabled: boolean;
     cors: boolean;
@@ -221,6 +231,7 @@ export interface MessageQueueSpecificConfig {
 export type ComponentSpecificConfig =
     | CDNSpecificConfig
     | LoadBalancerSpecificConfig
+    | ProxySpecificConfig
     | APIGatewaySpecificConfig
     | AppServerSpecificConfig
     | CacheSpecificConfig
