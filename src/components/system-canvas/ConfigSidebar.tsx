@@ -38,6 +38,10 @@ const SPECIFIC_CONFIG_ENUMS: Partial<Record<string, Record<string, string[]>>> =
         instanceType: ['small', 'medium', 'large', 'xlarge'],
         jobType: ['cpu-bound', 'io-bound', 'mixed'],
     },
+    pub_sub: {
+        engine: ['kafka', 'google-pubsub', 'sns-sqs'],
+        deliveryMode: ['push', 'pull'],
+    },
 };
 
 export default function ConfigSidebar() {

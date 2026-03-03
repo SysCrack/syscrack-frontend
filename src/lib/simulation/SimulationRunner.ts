@@ -20,7 +20,7 @@ import { methodToReadWrite, PAYLOAD_LATENCY_MULTIPLIER } from './types';
 import { classifyEdges, EdgeSemantics, ChaosPolicy, isMultiDBWrite } from './TopologyInference';
 import { MessageQueueModel } from './models/MessageQueueModel';
 import { LoadBalancerModel } from './models/LoadBalancerModel';
-import { CacheModel, WorkerModel } from './models';
+import { CacheModel, WorkerModel, PubSubModel } from './models';
 import { DBReplicationModel } from './models/DatabaseModel';
 
 // ── Cache entry simulator (bounded entries, eviction by policy) ──
@@ -254,6 +254,9 @@ export class SimulationRunner {
     // Workers
     public workerModels = new Map<string, WorkerModel>();
 
+    // Pub/Sub brokers
+    public pubSubModels = new Map<string, PubSubModel>();
+
     // API Gateway: allowance per step (reset each step), dropped cumulative
     private apiGatewayAllowanceRemaining: Map<string, number> = new Map();
     private apiGatewayDropped: Map<string, number> = new Map();
@@ -363,6 +366,9 @@ export class SimulationRunner {
             if (node.type === 'database_sql' || node.type === 'database_nosql') {
                 this.dbModels.set(node.id, new DBReplicationModel(node));
             }
+            if (node.type === 'pub_sub') {
+                this.pubSubModels.set(node.id, new PubSubModel(node));
+            }
             if (node.type === 'worker') {
                 this.workerModels.set(node.id, new WorkerModel(node));
             }
@@ -426,6 +432,7 @@ export class SimulationRunner {
         this.mqProcessAccumulator.clear();
         this.previousNodeFailure.clear();
         this.workerModels.clear();
+        this.pubSubModels.clear();
 
         this.apiGatewayAllowanceRemaining.clear();
         this.apiGatewayDropped.clear();
@@ -488,6 +495,9 @@ export class SimulationRunner {
             }
             if (node.type === 'api_gateway') {
                 this.apiGatewayDropped.set(node.id, 0);
+            }
+            if (node.type === 'pub_sub') {
+                this.pubSubModels.set(node.id, new PubSubModel(node));
             }
             if (node.type === 'worker') {
                 this.workerModels.set(node.id, new WorkerModel(node));
@@ -1046,6 +1056,14 @@ export class SimulationRunner {
             this.spawnFromProxy(node, outConns, count, traceId, parentParticle);
         } else if (nodeType === 'cache' || nodeType === 'cdn') {
             this.spawnFromCache(node, outConns, count, traceId, parentParticle);
+        } else if (nodeType === 'pub_sub') {
+            const pubSubModel = this.pubSubModels.get(node.id);
+            const multiplier = pubSubModel?.getThroughputMultiplier() ?? 1.0;
+            const effectiveCount = Math.ceil(count * multiplier);
+            if (effectiveCount <= 0) return;
+            for (const conn of outConns) {
+                this.emitParticle(conn, effectiveCount, undefined, traceId, parentParticle, readWriteOverride);
+            }
         } else if (nodeType === 'api_gateway') {
             const allowance = this.apiGatewayAllowanceRemaining.get(node.id) ?? 0;
             const allowed = Math.min(count, Math.max(0, allowance));
@@ -1879,6 +1897,15 @@ export class SimulationRunner {
             latency = processingLatency + protocolOverhead;
             if (workerModel) {
                 workerModel.recordTask(processingLatency);
+            }
+        } else if (targetNode.type === 'pub_sub') {
+            const pubSubModel = this.pubSubModels.get(targetNode.id);
+            const publishLatency = pubSubModel?.getPublishLatencyMs() ?? 3;
+            const subscriberCount = pubSubModel?.getSubscriberGroupCount() ?? 1;
+            // Broker adds small fixed latency; fan-out is handled in spawnFromNode.
+            latency = publishLatency + protocolOverhead;
+            if (pubSubModel) {
+                pubSubModel.recordPublish(subscriberCount * particle.count);
             }
         } else {
             latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
@@ -2926,6 +2953,43 @@ export class SimulationRunner {
                         deadLettered: 0,
                         droppedMessages: mqModel?.droppedMessages ?? 0,
                         deliveryGuarantee: mqGuarantee,
+                    };
+                    break;
+                }
+                case 'pub_sub': {
+                    const pubSubModel = this.pubSubModels.get(node.id);
+                    const subs = (c.subscriberGroupCount as number) ?? 2;
+                    const subscriberGroupCount = Math.max(1, subs);
+                    const incomingRps = this.nodeRpsEma.get(node.id) ?? 0;
+                    const fanOutRps = Math.round(incomingRps * subscriberGroupCount);
+                    const orderingEnabled = (c.orderingEnabled as boolean) ?? false;
+
+                    const diagnostics: string[] = detail.diagnostics ?? [];
+
+                    if (orderingEnabled) {
+                        diagnostics.push(
+                            'Ordering enabled: throughput reduced ~50% (sequential per-key delivery). Disable if not required (DDIA Ch.11 §Ordering).',
+                        );
+                    }
+
+                    if (subscriberGroupCount >= 5 && incomingRps > 0) {
+                        diagnostics.push(
+                            `High fan-out: ${subscriberGroupCount} subscriber groups × ${Math.round(incomingRps)} RPS ≈ ${fanOutRps} total downstream RPS. Ensure consumers can handle multiplied load (DDIA Ch.11).`,
+                        );
+                    }
+
+                    if (diagnostics.length > 0) {
+                        detail.diagnostics = diagnostics;
+                    }
+
+                    detail.componentDetail = {
+                        kind: 'pub_sub',
+                        engine: (c.engine as string) ?? 'kafka',
+                        subscriberGroupCount,
+                        messagesPublished: pubSubModel?.messagesPublished ?? 0,
+                        totalFanOutDeliveries: pubSubModel?.totalFanOutDeliveries ?? 0,
+                        fanOutRps,
+                        orderingEnabled,
                     };
                     break;
                 }

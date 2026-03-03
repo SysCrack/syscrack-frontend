@@ -238,6 +238,15 @@ export interface MessageQueueSpecificConfig {
     retentionPeriod: number;
 }
 
+export interface PubSubSpecificConfig {
+    engine: 'kafka' | 'google-pubsub' | 'sns-sqs';
+    topicCount: number;
+    subscriberGroupCount: number;
+    deliveryMode: 'push' | 'pull';
+    retentionHours: number;
+    orderingEnabled: boolean;
+}
+
 export type ComponentSpecificConfig =
     | CDNSpecificConfig
     | LoadBalancerSpecificConfig
@@ -250,6 +259,7 @@ export type ComponentSpecificConfig =
     | DatabaseNoSQLSpecificConfig
     | ObjectStoreSpecificConfig
     | MessageQueueSpecificConfig
+    | PubSubSpecificConfig
     | Record<string, unknown>;
 
 // ============ Canvas Node ============

@@ -253,6 +253,26 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
         defaultSpecificConfig: { type: 'standard', visibilityTimeout: 30, deadLetterQueue: true, maxRetries: 3, retentionPeriod: 168 },
         applicableLayers: { scaling: true, consistency: true, resilience: false, trafficControl: true, sharding: false },
     },
+    {
+        type: 'pub_sub',
+        label: 'Pub/Sub',
+        icon: '📢',
+        category: 'messaging',
+        priority: 'p2',
+        description: 'Fan-out publish/subscribe broker — Kafka/PubSub/SNS',
+        defaultSharedConfig: {
+            ...BASE_SHARED,
+        },
+        defaultSpecificConfig: {
+            engine: 'kafka',
+            topicCount: 1,
+            subscriberGroupCount: 2,
+            deliveryMode: 'push',
+            retentionHours: 24,
+            orderingEnabled: false,
+        },
+        applicableLayers: { scaling: false, consistency: false, resilience: false, trafficControl: false, sharding: false },
+    },
 
     // ── Chaos ─────────────────────────────────────
     {

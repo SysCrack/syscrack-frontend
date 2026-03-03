@@ -110,6 +110,15 @@ export type ComponentDetailData =
         isSaturated: boolean;
         jobType: string;
         processingTimeMs: number;
+    }
+    | {
+        kind: 'pub_sub';
+        engine: string;
+        subscriberGroupCount: number;
+        messagesPublished: number;
+        totalFanOutDeliveries: number;
+        fanOutRps: number;
+        orderingEnabled: boolean;
     };
 
 export interface NodeDetailMetrics extends NodeSimSummary {

@@ -382,6 +382,23 @@ function WorkerDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'worker' 
     );
 }
 
+function PubSubDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'pub_sub' }> }) {
+    return (
+        <>
+            <Section title="Config">
+                <Row label="Engine" value={d.engine} />
+                <Row label="Subscribers" value={d.subscriberGroupCount} />
+                <Row label="Ordering" value={d.orderingEnabled ? 'Enabled' : 'Disabled'} />
+            </Section>
+            <Section title="Fan-out">
+                <Row label="Fan-out RPS" value={d.fanOutRps} />
+                <Row label="Published" value={d.messagesPublished} />
+                <Row label="Deliveries" value={d.totalFanOutDeliveries} />
+            </Section>
+        </>
+    );
+}
+
 // ── Main component ──
 
 interface LiveComponentInspectorProps {
@@ -475,6 +492,7 @@ export default function LiveComponentInspector({ nodeId }: LiveComponentInspecto
                     {detail.componentDetail.kind === 'api_gateway' && <APIGatewayDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'client' && <ClientDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'worker' && <WorkerDetail d={detail.componentDetail} />}
+                    {detail.componentDetail.kind === 'pub_sub' && <PubSubDetail d={detail.componentDetail} />}
                 </>
             )}
 

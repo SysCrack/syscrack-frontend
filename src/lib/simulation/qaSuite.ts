@@ -1566,9 +1566,97 @@ function runTC023(): QaResult {
     return { id: 'TC-023', name: 'CDC Pipeline', passed: false, failures: ['BLOCKED: CDC Connector not implemented'] };
 }
 
-// BLOCKED: requires Pub/Sub P2 component
 function runTC024(): QaResult {
-    return { id: 'TC-024', name: 'Pub/Sub Fan-Out', passed: false, failures: ['BLOCKED: Pub/Sub P2 component not implemented'] };
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, {
+            specific: { requestsPerSecond: 300, readWriteRatio: 0.0 }, // all writes
+        }),
+        makeNode('app1', 'app_server', 'App Server', 200, 0),
+        makeNode('ps1', 'pub_sub', 'Pub/Sub', 400, 0, {
+            specific: { subscriberGroupCount: 3, orderingEnabled: false },
+        }),
+        makeNode('w1', 'worker', 'Worker A', 600, -60, {
+            shared: { scaling: { instances: 2, nodeCapacityRps: 500 } },
+            specific: {
+                instanceType: 'medium',
+                processingTimeMs: 50,
+                jobType: 'io-bound',
+                autoScaling: false,
+                minInstances: 1,
+                maxInstances: 10,
+                maxRetries: 3,
+            },
+        }),
+        makeNode('w2', 'worker', 'Worker B', 600, 0, {
+            shared: { scaling: { instances: 2, nodeCapacityRps: 500 } },
+            specific: {
+                instanceType: 'medium',
+                processingTimeMs: 50,
+                jobType: 'io-bound',
+                autoScaling: false,
+                minInstances: 1,
+                maxInstances: 10,
+                maxRetries: 3,
+            },
+        }),
+        makeNode('w3', 'worker', 'Worker C', 600, 60, {
+            shared: { scaling: { instances: 2, nodeCapacityRps: 500 } },
+            specific: {
+                instanceType: 'medium',
+                processingTimeMs: 50,
+                jobType: 'io-bound',
+                autoScaling: false,
+                minInstances: 1,
+                maxInstances: 10,
+                maxRetries: 3,
+            },
+        }),
+    ];
+
+    const connections = [
+        makeConnection('c1-app', 'c1', 'app1'),
+        makeConnection('app-ps', 'app1', 'ps1'),
+        makeConnection('ps-w1', 'ps1', 'w1'),
+        makeConnection('ps-w2', 'ps1', 'w2'),
+        makeConnection('ps-w3', 'ps1', 'w3'),
+    ];
+
+    const metrics = runSim(nodes, connections, 200);
+    const failures: string[] = [];
+
+    const inputRps = metrics.nodeMetrics['app1']?.currentRps ?? 0;
+    const w1Rps = metrics.nodeMetrics['w1']?.currentRps ?? 0;
+    const w2Rps = metrics.nodeMetrics['w2']?.currentRps ?? 0;
+    const w3Rps = metrics.nodeMetrics['w3']?.currentRps ?? 0;
+
+    const totalDownstream = w1Rps + w2Rps + w3Rps;
+    const mean = totalDownstream / 3;
+
+    // Assert 1: total downstream RPS ≈ inputRps × 3
+    if (inputRps > 0) {
+        const expectedTotal = inputRps * 3;
+        const lower = expectedTotal * 0.8;
+        const upper = expectedTotal * 1.2;
+        if (totalDownstream < lower || totalDownstream > upper) {
+            failures.push(`Total downstream RPS ${totalDownstream.toFixed(1)} outside expected range [${lower.toFixed(1)}, ${upper.toFixed(1)}] for inputRps=${inputRps.toFixed(1)} and fan-out x3`);
+        }
+    } else {
+        failures.push('Input RPS at App Server was 0, cannot validate fan-out');
+    }
+
+    // Assert 2: each worker receives ~equal RPS (±20% of mean)
+    const workers: Array<{ id: string; rps: number }> = [
+        { id: 'w1', rps: w1Rps },
+        { id: 'w2', rps: w2Rps },
+        { id: 'w3', rps: w3Rps },
+    ];
+    for (const w of workers) {
+        if (mean > 0 && Math.abs(w.rps - mean) > mean * 0.2) {
+            failures.push(`Worker ${w.id} RPS ${w.rps.toFixed(1)} is not within ±20% of mean ${mean.toFixed(1)}`);
+        }
+    }
+
+    return { id: 'TC-024', name: 'Pub/Sub Fan-Out', passed: failures.length === 0, failures };
 }
 
 // BLOCKED: requires DNS P2 component
