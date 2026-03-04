@@ -20,9 +20,12 @@ import { methodToReadWrite, PAYLOAD_LATENCY_MULTIPLIER } from './types';
 import { classifyEdges, EdgeSemantics, ChaosPolicy, isMultiDBWrite } from './TopologyInference';
 import { MessageQueueModel } from './models/MessageQueueModel';
 import { LoadBalancerModel } from './models/LoadBalancerModel';
-import { CacheModel, WorkerModel, PubSubModel } from './models';
+import { CacheModel } from './models/CacheModel';
+import { WorkerModel } from './models/WorkerModel';
+import { PubSubModel } from './models/PubSubModel';
 import { CDCModel } from './models/CDCModel';
 import { DBReplicationModel } from './models/DatabaseModel';
+import { DNSModel } from './models/DNSModel';
 
 // ── Cache entry simulator (bounded entries, eviction by policy) ──
 
@@ -255,10 +258,12 @@ export class SimulationRunner {
     // Workers
     public workerModels = new Map<string, WorkerModel>();
 
-    // Pub/Sub brokers
     public pubSubModels = new Map<string, PubSubModel>();
 
     public cdcModels = new Map<string, CDCModel>();
+
+    public dnsModels = new Map<string, DNSModel>();
+    public glacierWarmedNodes = new Set<string>();
 
     // API Gateway: allowance per step (reset each step), dropped cumulative
     private apiGatewayAllowanceRemaining: Map<string, number> = new Map();
@@ -386,6 +391,9 @@ export class SimulationRunner {
             if (node.type === 'cdc_connector') {
                 this.cdcModels.set(node.id, new CDCModel(node));
             }
+            if (node.type === 'dns') {
+                this.dnsModels.set(node.id, new DNSModel(node));
+            }
         }
         for (const conn of this.connections) {
             this.connectionMap.set(conn.id, conn);
@@ -448,6 +456,8 @@ export class SimulationRunner {
         this.workerModels.clear();
         this.pubSubModels.clear();
         this.cdcModels.clear();
+        this.dnsModels.clear();
+        this.glacierWarmedNodes.clear();
 
         this.apiGatewayAllowanceRemaining.clear();
         this.apiGatewayDropped.clear();
@@ -520,6 +530,9 @@ export class SimulationRunner {
             }
             if (node.type === 'cdc_connector') {
                 this.cdcModels.set(node.id, new CDCModel(node));
+            }
+            if (node.type === 'dns') {
+                this.dnsModels.set(node.id, new DNSModel(node));
             }
         }
         nextParticleId = 0;
@@ -781,28 +794,28 @@ export class SimulationRunner {
             // Find downstream consumers to determine pulling capacity
             const outEdges = this.connectionsBySource.get(node.id) ?? [];
             let totalConsumerCapacity = 0;
-            let workerPerGroupThroughput = 0;
+
             for (const edge of outEdges) {
                 const consumer = this.nodeMap.get(edge.targetId);
-                if (consumer && consumer.type !== 'object_store' && consumer.type !== 'database_sql' && consumer.type !== 'database_nosql') {
-                    // This is a simplification: assuming all non-storage downstream nodes are active consumers pulling from the queue.
-                    if (consumer.type === 'worker') {
-                        // Per-group throughput for workers is based on replicas × (1000 / processingTimeMs)
-                        const cWorker = consumer.specificConfig as Record<string, unknown>;
-                        const replicas = consumer.sharedConfig.scaling?.instances ?? 1;
-                        const processingTimeMs = (cWorker.processingTimeMs as number) ?? 50;
-                        workerPerGroupThroughput += replicas * (1000 / Math.max(processingTimeMs, 1));
-                    } else {
-                        const rawCap =
-                            ((consumer.sharedConfig.scaling?.nodeCapacityRps as number) ?? 1000) *
-                            ((consumer.sharedConfig.scaling?.instances as number) ?? 1);
-                        totalConsumerCapacity += rawCap;
+                if (!consumer) continue;
+
+                // Storage nodes do not actively pull from MQs
+                if (consumer.type === 'object_store' || consumer.type === 'database_sql' || consumer.type === 'database_nosql') {
+                    continue;
+                }
+
+                if (consumer.type === 'worker') {
+                    const workerModel = this.workerModels.get(consumer.id);
+                    if (workerModel) {
+                        totalConsumerCapacity += workerModel.getEffectiveThroughput();
                     }
+                } else {
+                    const rawCap =
+                        ((consumer.sharedConfig.scaling?.nodeCapacityRps as number) ?? 1000) *
+                        ((consumer.sharedConfig.scaling?.instances as number) ?? 1);
+                    totalConsumerCapacity += rawCap;
                 }
             }
-
-            // Fallback: If no consumers connected yet, consumerThroughput is 0 (queue builds up)
-            const consumerThroughput = totalConsumerCapacity + workerPerGroupThroughput;
 
             // Allow specific config to override consumerGroupCount
             const sc = node.sharedConfig as any;
@@ -831,25 +844,9 @@ export class SimulationRunner {
             }
 
             // Apply exactly-once throughput reduction (15% overhead for txn coordination)
-            let effectiveConsumerThroughput = guarantee === 'exactly-once'
-                ? consumerThroughput * 0.85
-                : consumerThroughput;
-
-            // When draining to Workers, cap MQ drain rate by Worker capacity.
-            // MQ consumer throughput remains the primary constraint; Worker capacity further limits it only if lower.
-            let totalWorkerThroughput = 0;
-            for (const edge of outEdges) {
-                const consumer = this.nodeMap.get(edge.targetId);
-                if (consumer?.type === 'worker') {
-                    const workerModel = this.workerModels.get(consumer.id);
-                    if (workerModel) {
-                        totalWorkerThroughput += workerModel.getEffectiveThroughput();
-                    }
-                }
-            }
-            if (totalWorkerThroughput > 0) {
-                effectiveConsumerThroughput = Math.min(effectiveConsumerThroughput, totalWorkerThroughput);
-            }
+            const effectiveConsumerThroughput = guarantee === 'exactly-once'
+                ? totalConsumerCapacity * 0.85
+                : totalConsumerCapacity;
 
             const processed = mqModel.dequeue(effectiveConsumerThroughput * (cappedDt / 1000), consumerGroupCount);
 
@@ -1117,6 +1114,8 @@ export class SimulationRunner {
             for (const conn of outConns) {
                 this.emitParticle(conn, allowed, undefined, traceId, parentParticle, readWriteOverride);
             }
+        } else if (nodeType === 'dns') {
+            this.spawnFromDNS(node, outConns, count, traceId, parentParticle);
         } else if (nodeType === 'app_server') {
             const hasCache = outConns.some((c) => this.nodeMap.get(c.targetId)?.type === 'cache');
             const hasDb = outConns.some((c) => {
@@ -1330,6 +1329,25 @@ export class SimulationRunner {
                 const methodStr = pp?.method ? ` ${pp.method}` : '';
                 this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed via proxy to ${targetName} (${algo})`, timestamp: this.tick, method: pp?.method, readWrite: pp?.readWrite });
             }
+        }
+    }
+
+    private spawnFromDNS(node: CanvasNode, outConnsRaw: CanvasConnection[], count: number, traceId?: string, pp?: RequestParticle) {
+        const dnsModel = this.dnsModels.get(node.id);
+        if (!dnsModel) return;
+
+        const outConns = outConnsRaw.filter(c => !dnsModel.isRemoved(c.targetId));
+        if (outConns.length === 0) return;
+
+        // Simple failover: skip removed backends
+        const targetConn = outConns[0];
+
+        // Ensure we emit. Usually clients cache DNS heavily.
+        this.emitParticle(targetConn, count, undefined, traceId, pp);
+
+        if (traceId) {
+            const targetName = this.nodeMap.get(targetConn.targetId)?.name ?? targetConn.targetId;
+            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed to ${targetName} (DNS)`, timestamp: this.tick, method: pp?.method, readWrite: pp?.readWrite });
         }
     }
 
@@ -1941,8 +1959,34 @@ export class SimulationRunner {
         } else if (targetNode.type === 'cdc_connector') {
             const cdcModel = this.cdcModels.get(targetNode.id);
             latency = (cdcModel?.getCaptureLatencyMs() ?? 200) + protocolOverhead;
+        } else if (targetNode.type === 'dns') {
+            latency = 1 + protocolOverhead; // DNS lookup is fast
         } else {
             latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
+        }
+
+        // Object Store Glacier logic
+        if (targetNode.type === 'object_store') {
+            const scOs = targetNode.specificConfig as Record<string, unknown>;
+            if (scOs.storageClass === 'glacier' && currRw === 'read') {
+                if (!this.glacierWarmedNodes.has(targetNode.id)) {
+                    this.glacierWarmedNodes.add(targetNode.id);
+                    latency += 60000; // 60s cold read penalty in sim scale
+                    if (particle.traceId) {
+                        this.addTraceEvent(particle.traceId, {
+                            nodeId: targetNode.id,
+                            nodeName: targetNode.name,
+                            nodeType: targetNode.type,
+                            action: `Glacier cold read restore penalty (~60s)`,
+                            timestamp: this.tick,
+                            method: particle.method,
+                            readWrite: currRw,
+                            status: 'warning',
+                            parentId: particle.parentTraceEventId,
+                        });
+                    }
+                }
+            }
         }
 
         // --- DISTRIBUTED TRANSACTIONS: 2PC / Saga Overhead (Task 3) ---
@@ -2655,6 +2699,66 @@ export class SimulationRunner {
                         effectivePoolSize: effectivePool,
                         poolSize,
                     };
+                    break;
+                }
+                case 'dns': {
+                    const c = node.specificConfig as Record<string, unknown>;
+                    const healthCheckConfig = (c.healthCheck as any) ?? node.sharedConfig.resilience?.healthCheck;
+                    const outConns = this.connectionsBySource.get(node.id) ?? [];
+                    const diagnostics: string[] = detail.diagnostics ?? [];
+
+                    const dnsModel = this.dnsModels.get(node.id);
+
+                    if (dnsModel) {
+                        for (const conn of outConns) {
+                            const errsTarget = this.nodeErrorCount.get(conn.targetId) ?? 0;
+                            const reqsTarget = this.nodeRequestCount.get(conn.targetId) ?? 0;
+                            const errRateTarget = reqsTarget > 0 ? errsTarget / reqsTarget : 0;
+                            const targetNode = this.nodeMap.get(conn.targetId);
+
+                            dnsModel.recordHealthCheck(
+                                conn.targetId,
+                                errRateTarget,
+                                this.tick,
+                                healthCheckConfig,
+                                100 / this.speed,
+                                !!targetNode?.sharedConfig.chaos?.nodeFailure
+                            );
+
+                            if (dnsModel.isInFailoverWindow(conn.targetId)) {
+                                diagnostics.push(`Propagating failover... traffic still going to failed node ${targetNode?.name}`);
+                            } else if (dnsModel.isRemoved(conn.targetId)) {
+                                diagnostics.push(`Node ${targetNode?.name} removed from DNS resolution`);
+                            }
+                        }
+                    }
+
+                    if (diagnostics.length > 0) detail.diagnostics = diagnostics;
+
+                    detail.componentDetail = {
+                        kind: 'dns',
+                        recordType: (c.recordType as string) ?? 'A',
+                        routingPolicy: (c.routingPolicy as string) ?? 'simple',
+                    };
+                    break;
+                }
+                case 'object_store': {
+                    const scOs = node.specificConfig as Record<string, unknown>;
+                    detail.componentDetail = {
+                        kind: 'object_store',
+                        storageClass: (scOs.storageClass as string) ?? 'standard',
+                        versioning: (scOs.versioning as boolean) ?? false,
+                        lifecycleRules: (scOs.lifecycleRules as boolean) ?? false,
+                    };
+                    const diagnostics: string[] = detail.diagnostics ?? [];
+                    if (scOs.storageClass === 'glacier') {
+                        if (!this.glacierWarmedNodes.has(node.id)) {
+                            diagnostics.push('Glacier storage: First read will incur a massive restore latency penalty (~60s).');
+                        } else {
+                            diagnostics.push('Glacier storage: Warmed up after cold read.');
+                        }
+                    }
+                    if (diagnostics.length > 0) detail.diagnostics = diagnostics;
                     break;
                 }
                 case 'app_server': {

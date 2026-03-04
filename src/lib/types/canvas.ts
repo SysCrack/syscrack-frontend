@@ -162,6 +162,17 @@ export interface LoadBalancerSpecificConfig {
     backendWeights?: Record<string, number>;
 }
 
+export interface DNSSpecificConfig {
+    recordType: 'A' | 'CNAME' | 'ALIAS';
+    ttlSeconds: number;
+    routingPolicy: 'simple' | 'weighted' | 'latency' | 'failover' | 'geolocation';
+    healthCheck: {
+        enabled: boolean;
+        intervalSeconds: number;
+        failoverDelayMs: number;
+    };
+}
+
 export interface ProxySpecificConfig {
     algorithm: 'round-robin' | 'least-connections' | 'ip-hash' | 'weighted';
     connectionPooling: boolean;
@@ -258,6 +269,7 @@ export interface CDCConnectorSpecificConfig {
 
 export type ComponentSpecificConfig =
     | CDNSpecificConfig
+    | DNSSpecificConfig
     | LoadBalancerSpecificConfig
     | ProxySpecificConfig
     | APIGatewaySpecificConfig

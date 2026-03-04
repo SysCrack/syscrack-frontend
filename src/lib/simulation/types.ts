@@ -97,7 +97,8 @@ export type ComponentDetailData =
     | { kind: 'database_sql'; engine: string; readCapacity: number; writeCapacity: number; readReplicas: number; connectionPooling: boolean; activeConnections: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number }
     | { kind: 'database_nosql'; engine: string; consistencyLevel: string; capacity: number; utilization: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; quorumConditionMet?: boolean; quorumSummary?: string; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number }
     | { kind: 'message_queue'; partitions: number; isFifo: boolean; queueDepth: number; enqueued: number; processed: number; deadLettered: number; droppedMessages?: number; deliveryGuarantee?: string }
-    | { kind: 'object_store'; storageClass: string; capacity: number; utilization: number }
+    | { kind: 'object_store'; storageClass: string; versioning?: boolean; lifecycleRules?: boolean; capacity?: number; utilization?: number }
+    | { kind: 'dns'; recordType: string; routingPolicy: string }
     | { kind: 'api_gateway'; authEnabled: boolean; rateLimiting: boolean; rateLimit: number; allowed: number; dropped: number }
     | { kind: 'client'; requestsPerSecond: number; readWriteRatio?: number }
     | {

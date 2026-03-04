@@ -1477,9 +1477,32 @@ function runTC031(): QaResult {
 // Do not remove; unblock when the required component/feature is implemented.
 // ---------------------------------------------------------
 
-// BLOCKED: requires Object Store glacier restore latency modeling (deferred 4g)
 function runTC012(): QaResult {
-    return { id: 'TC-012', name: 'Object Store — Glacier Cold Read', passed: false, failures: ['BLOCKED: Object Store glacier restore latency not modeled (deferred 4g)'] };
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 10, readWriteRatio: 1.0 } }),
+        makeNode('os1', 'object_store', 'Glacier Storage', 200, 0, {
+            specific: { storageClass: 'glacier', versioning: false, lifecycleRules: false }
+        }),
+    ];
+    const connections = [makeConnection('c1-os', 'c1', 'os1')];
+
+    // Run enough ticks for particles to arrive
+    const metrics = runSim(nodes, connections, 80);
+    const failures: string[] = [];
+
+    const osLatency = metrics.nodeMetrics['os1']?.avgLatencyMs || 0;
+    // With 80 ticks and 10 RPS, many fast particles pull the average down, but the initial 60000ms makes it > 500ms.
+    if (osLatency < 500) {
+        failures.push(`Expected Glacier cold read latency average to be inflated > 500ms, got ${osLatency}ms`);
+    }
+
+    const diags = metrics.nodeMetrics['os1']?.diagnostics || [];
+    const hasGlacierDiag = diags.some((d: string) => d.includes('massive restore latency penalty') || d.includes('Warmed up'));
+    if (!hasGlacierDiag) {
+        failures.push('Expected Glacier storage diagnostic missing.');
+    }
+
+    return { id: 'TC-012', name: 'Object Store — Glacier Cold Read', passed: failures.length === 0, failures };
 }
 
 function runTC021(): QaResult {
@@ -1502,8 +1525,8 @@ function runTC021(): QaResult {
             shared: { scaling: { instances: 2, nodeCapacityRps: 400 } },
             specific: {
                 instanceType: 'medium',
-                processingTimeMs: 50,
-                jobType: 'io-bound',
+                processingTimeMs: 25,
+                jobType: 'cpu-bound',
                 autoScaling: false,
                 minInstances: 1,
                 maxInstances: 10,
@@ -1702,9 +1725,44 @@ function runTC024(): QaResult {
     return { id: 'TC-024', name: 'Pub/Sub Fan-Out', passed: failures.length === 0, failures };
 }
 
-// BLOCKED: requires DNS P2 component
 function runTC035(): QaResult {
-    return { id: 'TC-035', name: 'DNS Failover Propagation Window', passed: false, failures: ['BLOCKED: DNS P2 component not implemented'] };
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 100, readWriteRatio: 1.0 } }),
+        makeNode('dns1', 'dns', 'DNS Router', 200, 0, {
+            specific: { recordType: 'A', routingPolicy: 'failover', healthCheck: { enabled: true, intervalSeconds: 1, failoverDelayMs: 10000 } }
+        }),
+        makeNode('app_primary', 'app_server', 'Primary', 400, -100, { shared: { chaos: { nodeFailure: true } } }),
+        makeNode('app_standby', 'app_server', 'Standby', 400, 100)
+    ];
+    const connections = [
+        makeConnection('c1-dns', 'c1', 'dns1'),
+        makeConnection('dns-primary', 'dns1', 'app_primary'),
+        makeConnection('dns-standby', 'dns1', 'app_standby')
+    ];
+
+    const metricsFailoverWindow = runSim(nodes, connections, 300);
+    const failures: string[] = [];
+
+    // Evaluate transition window
+    const diags = metricsFailoverWindow.nodeMetrics['dns1']?.diagnostics || [];
+    const hasFailoverDiag = diags.some((d: string) => d.includes('Propagating failover'));
+    if (!hasFailoverDiag) {
+        failures.push('DNS missing failover propagation diagnostic during transition window (300 ticks).');
+    }
+
+    const reqsPrimary = metricsFailoverWindow.nodeMetrics['app_primary']?.totalRequests || 0;
+    if (reqsPrimary === 0) {
+        failures.push('Primary should continue receiving traffic during failover window before DNS propagates.');
+    }
+
+    const metricsRecovered = runSim(nodes, connections, 800);
+    const diagsRecovered = metricsRecovered.nodeMetrics['dns1']?.diagnostics || [];
+    const hasRemovedDiag = diagsRecovered.some((d: string) => d.includes('removed from DNS resolution'));
+    if (!hasRemovedDiag) {
+        failures.push(`DNS missing node removal diagnostic after failover delay (800 ticks). Diags: ${JSON.stringify(diagsRecovered)}`);
+    }
+
+    return { id: 'TC-035', name: 'DNS Failover Propagation Window', passed: failures.length === 0, failures };
 }
 
 // BLOCKED: requires quorum + partition chaos interaction (Session 14 unlocks quorum; TC-043 can follow)

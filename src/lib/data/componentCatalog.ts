@@ -76,6 +76,22 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
         defaultSpecificConfig: { authEnabled: true, cors: true, requestTransformation: false },
         applicableLayers: { scaling: true, consistency: false, resilience: true, trafficControl: true, sharding: false },
     },
+    {
+        type: 'dns',
+        label: 'DNS',
+        icon: '🌍',
+        category: 'traffic',
+        priority: 'p2',
+        description: 'Domain Name System — routes users to edge or LB',
+        defaultSharedConfig: BASE_SHARED,
+        defaultSpecificConfig: {
+            recordType: 'A',
+            ttlSeconds: 300,
+            routingPolicy: 'simple',
+            healthCheck: { enabled: true, intervalSeconds: 30, failoverDelayMs: 60000 },
+        },
+        applicableLayers: { scaling: false, consistency: false, resilience: true, trafficControl: false, sharding: false },
+    },
 
     // ── Compute ───────────────────────────────────
     {
@@ -252,6 +268,28 @@ export const COMPONENT_CATALOG: ComponentCatalogEntry[] = [
         },
         defaultSpecificConfig: { type: 'standard', visibilityTimeout: 30, deadLetterQueue: true, maxRetries: 3, retentionPeriod: 168 },
         applicableLayers: { scaling: true, consistency: true, resilience: false, trafficControl: true, sharding: false },
+    },
+    {
+        type: 'pub_sub',
+        label: 'Pub/Sub',
+        icon: '📡',
+        category: 'messaging',
+        priority: 'p2',
+        description: 'Publish-Subscribe topics — Kafka, SNS/SQS',
+        defaultSharedConfig: {
+            ...BASE_SHARED,
+            scaling: { instances: 3, nodeCapacityRps: 10000 },
+            consistency: { replicationStrategy: 'leader-follower', replicationFactor: 3 },
+        },
+        defaultSpecificConfig: {
+            engine: 'kafka',
+            topicCount: 1,
+            subscriberGroupCount: 2,
+            deliveryMode: 'push',
+            retentionHours: 168,
+            orderingEnabled: false,
+        },
+        applicableLayers: { scaling: true, consistency: true, resilience: false, trafficControl: true, sharding: true },
     },
     {
         type: 'cdc_connector',
