@@ -119,6 +119,14 @@ export type ComponentDetailData =
         totalFanOutDeliveries: number;
         fanOutRps: number;
         orderingEnabled: boolean;
+    }
+    | {
+        kind: 'cdc_connector';
+        captureMode: string;
+        captureLatencyMs: number;
+        changeEventsCaptured: number;
+        changeEventsEmitted: number;
+        includeDeletes: boolean;
     };
 
 export interface NodeDetailMetrics extends NodeSimSummary {
@@ -169,7 +177,7 @@ export interface SimulationOutput {
 // ── Request method / read-write types ──
 
 export type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
-export type ReadWrite = 'read' | 'write';
+export type ReadWrite = 'read' | 'write' | 'cdc';
 export type PayloadSize = 'tiny' | 'small' | 'medium' | 'large';
 
 export function methodToReadWrite(method?: RequestMethod): ReadWrite {

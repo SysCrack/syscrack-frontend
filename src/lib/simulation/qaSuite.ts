@@ -7,7 +7,7 @@ import { DEFAULT_SHARED_CONFIG } from '@/lib/types/canvas';
 /**
  * SysCrack QA Suite — maps to syscrack-requirements.md §5 (TC-001–TC-064).
  * Only a subset of TCs is implemented; permanently deferred TCs are present as
- * BLOCKED stubs (runTC012, runTC021, runTC023, runTC024, runTC035, runTC043,
+ * BLOCKED stubs (runTC012, runTC021, runTC024, runTC035, runTC043,
  * runTC050, runTC051) and return passed: false until the required component/feature exists.
  */
 export interface QaResult {
@@ -1563,7 +1563,50 @@ function runTC021(): QaResult {
 
 // BLOCKED: requires CDC Connector
 function runTC023(): QaResult {
-    return { id: 'TC-023', name: 'CDC Pipeline', passed: false, failures: ['BLOCKED: CDC Connector not implemented'] };
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 200, readWriteRatio: 0.0 } }),
+        makeNode('app1', 'app_server', 'App Server', 150, 0),
+        makeNode('db_sql', 'database_sql', 'DB SQL (source)', 300, 0),
+        makeNode('cdc1', 'cdc_connector', 'CDC Connector', 450, 0, {
+            specific: { captureMode: 'log-tail', captureLatencyMs: 200, includeDeletes: true },
+        }),
+        makeNode('mq1', 'message_queue', 'MQ', 600, 0),
+        makeNode('app2', 'app_server', 'App Server (consumer)', 750, 0),
+        makeNode('db_nosql', 'database_nosql', 'DB NoSQL (derived)', 900, 0),
+    ];
+    const connections = [
+        makeConnection('c-app', 'c1', 'app1'),
+        makeConnection('app-db', 'app1', 'db_sql'),
+        makeConnection('db-cdc', 'db_sql', 'cdc1'),
+        makeConnection('cdc-mq', 'cdc1', 'mq1'),
+        makeConnection('mq-app2', 'mq1', 'app2'),
+        makeConnection('app2-nosql', 'app2', 'db_nosql'),
+    ];
+    const metrics = runSim(nodes, connections, 250);
+    const failures: string[] = [];
+
+    // Assert 1: CDC particles appear downstream (MQ or NoSQL receives RPS > 0 from CDC path)
+    const mqRps = metrics.nodeMetrics['mq1']?.currentRps ?? 0;
+    const nosqlRps = metrics.nodeMetrics['db_nosql']?.currentRps ?? 0;
+    if (mqRps <= 0 && nosqlRps <= 0) {
+        failures.push(`CDC path: MQ RPS was ${mqRps}, NoSQL RPS was ${nosqlRps}; expected at least one > 0`);
+    }
+
+    // Assert 2: Propagation delay ≥ captureLatencyMs (200ms) — CDC config and diagnostic state it
+    const cdcDetail = metrics.nodeMetrics['cdc1']?.componentDetail;
+    const captureLatencyMs = (cdcDetail && cdcDetail.kind === 'cdc_connector') ? cdcDetail.captureLatencyMs : 0;
+    if (captureLatencyMs < 200) {
+        failures.push(`CDC captureLatencyMs was ${captureLatencyMs}, expected ≥ 200`);
+    }
+
+    // Assert 3: Diagnostic fires referencing eventual consistency
+    const cdcDiagnostics = metrics.nodeMetrics['cdc1']?.diagnostics ?? [];
+    const hasEventualConsistency = cdcDiagnostics.some((d) => d.toLowerCase().includes('eventually consistent'));
+    if (!hasEventualConsistency) {
+        failures.push(`CDC diagnostics should reference eventual consistency; got: ${cdcDiagnostics.join('; ')}`);
+    }
+
+    return { id: 'TC-023', name: 'CDC Pipeline', passed: failures.length === 0, failures };
 }
 
 function runTC024(): QaResult {

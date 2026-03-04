@@ -399,6 +399,22 @@ function PubSubDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'pub_sub'
     );
 }
 
+function CDCDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'cdc_connector' }> }) {
+    return (
+        <>
+            <Section title="Config">
+                <Row label="Mode" value={d.captureMode} />
+                <Row label="Capture latency" value={`${d.captureLatencyMs}ms`} />
+                <Row label="Includes deletes" value={d.includeDeletes ? 'yes' : 'no'} />
+            </Section>
+            <Section title="Events">
+                <Row label="Events captured" value={d.changeEventsCaptured.toLocaleString()} />
+                <Row label="Events emitted" value={d.changeEventsEmitted.toLocaleString()} />
+            </Section>
+        </>
+    );
+}
+
 // ── Main component ──
 
 interface LiveComponentInspectorProps {
@@ -493,6 +509,7 @@ export default function LiveComponentInspector({ nodeId }: LiveComponentInspecto
                     {detail.componentDetail.kind === 'client' && <ClientDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'worker' && <WorkerDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'pub_sub' && <PubSubDetail d={detail.componentDetail} />}
+                    {detail.componentDetail.kind === 'cdc_connector' && <CDCDetail d={detail.componentDetail} />}
                 </>
             )}
 

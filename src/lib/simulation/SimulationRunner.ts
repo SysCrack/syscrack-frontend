@@ -21,6 +21,7 @@ import { classifyEdges, EdgeSemantics, ChaosPolicy, isMultiDBWrite } from './Top
 import { MessageQueueModel } from './models/MessageQueueModel';
 import { LoadBalancerModel } from './models/LoadBalancerModel';
 import { CacheModel, WorkerModel, PubSubModel } from './models';
+import { CDCModel } from './models/CDCModel';
 import { DBReplicationModel } from './models/DatabaseModel';
 
 // ── Cache entry simulator (bounded entries, eviction by policy) ──
@@ -257,6 +258,8 @@ export class SimulationRunner {
     // Pub/Sub brokers
     public pubSubModels = new Map<string, PubSubModel>();
 
+    public cdcModels = new Map<string, CDCModel>();
+
     // API Gateway: allowance per step (reset each step), dropped cumulative
     private apiGatewayAllowanceRemaining: Map<string, number> = new Map();
     private apiGatewayDropped: Map<string, number> = new Map();
@@ -293,6 +296,14 @@ export class SimulationRunner {
         traceId?: string;
         pp?: RequestParticle;
         writeBehindDelayMs: number;
+    }> = [];
+
+    /** CDC: deferred change events from DB writes, emitted from CDC node in step() */
+    private scheduledCDCEvents: Array<{
+        dueTick: number;
+        cdcNodeId: string;
+        count: number;
+        readWrite: 'write';
     }> = [];
 
     // Distributed Transactions Diagnostics
@@ -372,6 +383,9 @@ export class SimulationRunner {
             if (node.type === 'worker') {
                 this.workerModels.set(node.id, new WorkerModel(node));
             }
+            if (node.type === 'cdc_connector') {
+                this.cdcModels.set(node.id, new CDCModel(node));
+            }
         }
         for (const conn of this.connections) {
             this.connectionMap.set(conn.id, conn);
@@ -433,6 +447,7 @@ export class SimulationRunner {
         this.previousNodeFailure.clear();
         this.workerModels.clear();
         this.pubSubModels.clear();
+        this.cdcModels.clear();
 
         this.apiGatewayAllowanceRemaining.clear();
         this.apiGatewayDropped.clear();
@@ -452,6 +467,7 @@ export class SimulationRunner {
         this.lbModels.clear();
         this.dynamicInstances.clear();
         this.scheduledWriteBehindWrites = [];
+        this.scheduledCDCEvents = [];
         for (const node of this.nodes) {
             this.nodeActiveCount.set(node.id, 0);
             this.nodeRecentArrivals.set(node.id, 0);
@@ -501,6 +517,9 @@ export class SimulationRunner {
             }
             if (node.type === 'worker') {
                 this.workerModels.set(node.id, new WorkerModel(node));
+            }
+            if (node.type === 'cdc_connector') {
+                this.cdcModels.set(node.id, new CDCModel(node));
             }
         }
         nextParticleId = 0;
@@ -738,6 +757,18 @@ export class SimulationRunner {
                     timestamp: this.tick,
                     readWrite: 'write',
                 });
+            }
+        }
+
+        // 2c. Drain due CDC change events — emit from CDC node to its downstream
+        const dueCDC = this.scheduledCDCEvents.filter((e) => e.dueTick <= this.tick);
+        this.scheduledCDCEvents = this.scheduledCDCEvents.filter((e) => e.dueTick > this.tick);
+        for (const event of dueCDC) {
+            const cdcModel = this.cdcModels.get(event.cdcNodeId);
+            cdcModel?.recordEmit(event.count);
+            const outEdges = this.connectionsBySource.get(event.cdcNodeId) ?? [];
+            for (const edge of outEdges) {
+                this.emitParticle(edge, event.count, undefined, undefined, undefined, 'cdc');
             }
         }
 
@@ -1907,6 +1938,9 @@ export class SimulationRunner {
             if (pubSubModel) {
                 pubSubModel.recordPublish(subscriberCount * particle.count);
             }
+        } else if (targetNode.type === 'cdc_connector') {
+            const cdcModel = this.cdcModels.get(targetNode.id);
+            latency = (cdcModel?.getCaptureLatencyMs() ?? 200) + protocolOverhead;
         } else {
             latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
         }
@@ -2053,6 +2087,29 @@ export class SimulationRunner {
             }
         }
 
+        // CDC: if this DB has a CDC connector attached, schedule a change event after captureLatencyMs
+        if (currRw === 'write' && (targetNode.type === 'database_sql' || targetNode.type === 'database_nosql')) {
+            const outEdges = this.connectionsBySource.get(targetNode.id) ?? [];
+            const tickDurationMs = 100 / this.speed;
+            for (const edge of outEdges) {
+                const downstream = this.nodeMap.get(edge.targetId);
+                if (downstream?.type === 'cdc_connector') {
+                    const cdcModel = this.cdcModels.get(downstream.id);
+                    if (cdcModel) {
+                        const captureLatencyMs = cdcModel.getCaptureLatencyMs();
+                        const delayTicks = Math.ceil(captureLatencyMs / tickDurationMs);
+                        cdcModel.recordCapture(particle.count);
+                        this.scheduledCDCEvents.push({
+                            dueTick: this.tick + delayTicks,
+                            cdcNodeId: downstream.id,
+                            count: particle.count,
+                            readWrite: 'write',
+                        });
+                    }
+                }
+            }
+        }
+
         // Exactly-once MQ coordination overhead
         if (targetNode.type === 'message_queue') {
             const mqGuarantee = (targetNode.specificConfig as any)?.deliveryGuarantee ?? 'at-least-once';
@@ -2147,11 +2204,13 @@ export class SimulationRunner {
         const rw = readWriteOverride ?? parentParticle?.readWrite;
         let color: string;
         if (traceId) {
-            color = rw === 'write' ? '#f59e0b' : '#eab308';
+            color = rw === 'write' ? '#f59e0b' : rw === 'cdc' ? '#a855f7' : '#eab308';
         } else if (rw === 'write') {
             color = colorOverride ?? '#f97316';
         } else if (rw === 'read') {
             color = colorOverride ?? '#3b82f6';
+        } else if (rw === 'cdc') {
+            color = colorOverride ?? '#a855f7';
         } else {
             color = colorOverride ?? '#22d3ee';
         }
@@ -2300,7 +2359,7 @@ export class SimulationRunner {
     }
 
     private isLeafNode(type: CanvasComponentType): boolean {
-        return ['database_sql', 'database_nosql', 'object_store', 'message_queue'].includes(type);
+        return ['database_sql', 'database_nosql', 'object_store', 'message_queue', 'cdc_connector'].includes(type);
     }
 
     private findUpstreamAppServer(nodeId: string): CanvasNode | undefined {
@@ -2990,6 +3049,47 @@ export class SimulationRunner {
                         totalFanOutDeliveries: pubSubModel?.totalFanOutDeliveries ?? 0,
                         fanOutRps,
                         orderingEnabled,
+                    };
+                    break;
+                }
+                case 'cdc_connector': {
+                    const cdcModel = this.cdcModels.get(node.id);
+                    const captureMode = (c.captureMode as string) ?? 'log-tail';
+                    const captureLatencyMs = (c.captureLatencyMs as number) ?? 200;
+                    const includeDeletes = (c.includeDeletes as boolean) ?? true;
+
+                    const diagnostics: string[] = [];
+
+                    diagnostics.push(
+                        `CDC pipeline active: downstream is eventually consistent with source DB. ` +
+                        `Propagation delay ≥ ${captureLatencyMs}ms (DDIA Ch.11 §Change Data Capture)`,
+                    );
+
+                    if (captureMode === 'timestamp-polling' && includeDeletes) {
+                        diagnostics.push(
+                            `timestamp-polling mode does not capture DELETE events — ` +
+                            `deletes will be missed in derived store (DDIA Ch.11)`,
+                        );
+                    }
+
+                    if (captureMode === 'trigger-based') {
+                        diagnostics.push(
+                            `trigger-based capture adds ~10% write latency to source DB ` +
+                            `on every INSERT/UPDATE/DELETE (DDIA Ch.11)`,
+                        );
+                    }
+
+                    if (diagnostics.length > 0) {
+                        detail.diagnostics = diagnostics;
+                    }
+
+                    detail.componentDetail = {
+                        kind: 'cdc_connector',
+                        captureMode,
+                        captureLatencyMs,
+                        changeEventsCaptured: cdcModel?.changeEventsCaptured ?? 0,
+                        changeEventsEmitted: cdcModel?.changeEventsEmitted ?? 0,
+                        includeDeletes,
                     };
                     break;
                 }

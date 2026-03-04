@@ -15,10 +15,11 @@ const VALID_DOWNSTREAM: Partial<Record<CanvasComponentType, CanvasComponentType[
     api_gateway: ['app_server'],
     app_server: ['cache', 'database_sql', 'database_nosql', 'message_queue', 'pub_sub', 'app_server', 'object_store', 'proxy'],
     cache: ['database_sql', 'database_nosql', 'cache', 'object_store', 'load_balancer', 'app_server'],
-    database_sql: ['database_sql', 'database_nosql'],
-    database_nosql: ['database_sql', 'database_nosql'],
+    database_sql: ['database_sql', 'database_nosql', 'cdc_connector'],
+    database_nosql: ['database_sql', 'database_nosql', 'cdc_connector'],
     message_queue: ['app_server', 'worker'],
     pub_sub: ['worker', 'app_server', 'serverless'],
+    cdc_connector: ['message_queue', 'pub_sub', 'database_nosql', 'object_store'],
     worker: ['database_sql', 'database_nosql', 'object_store', 'message_queue'],
     proxy: ['database_sql', 'database_nosql', 'cache', 'object_store', 'message_queue'],
     object_store: [], // Terminal node

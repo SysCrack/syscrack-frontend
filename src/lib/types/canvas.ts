@@ -47,6 +47,7 @@ export type CanvasComponentType =
     | 'shard'
     | 'replica'
     | 'partition'
+    | 'cdc_connector'
     // Chaos
     | 'chaos_latency'
     | 'chaos_failure'
@@ -247,6 +248,14 @@ export interface PubSubSpecificConfig {
     orderingEnabled: boolean;
 }
 
+export interface CDCConnectorSpecificConfig {
+    captureMode: 'log-tail' | 'trigger-based' | 'timestamp-polling';
+    captureLatencyMs: number;
+    includeDeletes: boolean;
+    snapshotOnStart: boolean;
+    snapshotLatencyMs: number;
+}
+
 export type ComponentSpecificConfig =
     | CDNSpecificConfig
     | LoadBalancerSpecificConfig
@@ -260,6 +269,7 @@ export type ComponentSpecificConfig =
     | ObjectStoreSpecificConfig
     | MessageQueueSpecificConfig
     | PubSubSpecificConfig
+    | CDCConnectorSpecificConfig
     | Record<string, unknown>;
 
 // ============ Canvas Node ============

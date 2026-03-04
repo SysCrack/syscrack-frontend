@@ -42,6 +42,9 @@ const SPECIFIC_CONFIG_ENUMS: Partial<Record<string, Record<string, string[]>>> =
         engine: ['kafka', 'google-pubsub', 'sns-sqs'],
         deliveryMode: ['push', 'pull'],
     },
+    cdc_connector: {
+        captureMode: ['log-tail', 'trigger-based', 'timestamp-polling'],
+    },
 };
 
 export default function ConfigSidebar() {
@@ -273,6 +276,30 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                 );
             })()}
 
+            {/* CDC Connector dedicated section */}
+            {node.type === 'cdc_connector' && (() => {
+                const spec = node.specificConfig as Record<string, unknown>;
+                const captureMode = (spec.captureMode as string) ?? 'log-tail';
+                const captureLatencyMs = (spec.captureLatencyMs as number) ?? 200;
+                const includeDeletes = (spec.includeDeletes as boolean) ?? true;
+                const snapshotOnStart = (spec.snapshotOnStart as boolean) ?? false;
+                const snapshotLatencyMs = (spec.snapshotLatencyMs as number) ?? 5000;
+                return (
+                    <Section title="CDC">
+                        <SelectField label="Capture mode" value={captureMode} options={['log-tail', 'trigger-based', 'timestamp-polling']}
+                            onChange={(v) => updateSpecific(node.id, { ...spec, captureMode: v })} />
+                        <NumberField label="Capture latency (ms)" value={captureLatencyMs} min={10} max={10000} step={10}
+                            onChange={(v) => updateSpecific(node.id, { ...spec, captureLatencyMs: Math.max(10, v) })} />
+                        <Toggle label="Include deletes" value={includeDeletes} onChange={(v) => updateSpecific(node.id, { ...spec, includeDeletes: v })} />
+                        <Toggle label="Snapshot on start" value={snapshotOnStart} onChange={(v) => updateSpecific(node.id, { ...spec, snapshotOnStart: v })} />
+                        {snapshotOnStart && (
+                            <NumberField label="Snapshot latency (ms)" value={snapshotLatencyMs} min={100} max={60000} step={100}
+                                onChange={(v) => updateSpecific(node.id, { ...spec, snapshotLatencyMs: v })} />
+                        )}
+                    </Section>
+                );
+            })()}
+
             {/* Component-specific config */}
             <Section title={`${catalog.label} Config`}>
                 {Object.entries(
@@ -285,6 +312,7 @@ function NodeConfig({ node }: { node: CanvasNode }) {
                     if (key === 'backendWeights') return null;
                     if (node.type === 'database_nosql' && (key === 'replication' || key === 'quorum')) return null;
                     if ((node.type === 'database_sql' || node.type === 'database_nosql') && key === 'sharding') return null;
+                    if (node.type === 'cdc_connector') return null;
 
                     const renderField = (k: string, v: any, parentKey?: string) => {
                         const fullKey = parentKey ? `${parentKey}.${k}` : k;
