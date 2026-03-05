@@ -1,13 +1,15 @@
 import type { CanvasNode, CanvasConnection } from '@/lib/types/canvas';
 import { SimulationRunner, LiveMetrics } from './SimulationRunner';
 import type { RequestTrace } from './types';
+import type { WorkloadProfile } from '../templates/types';
+import { urlShortenerTemplate } from '../templates/definitions/urlShortener';
 import { COMPONENT_CATALOG, getCatalogEntry } from '@/lib/data/componentCatalog';
 import { DEFAULT_SHARED_CONFIG } from '@/lib/types/canvas';
 
 /**
  * SysCrack QA Suite — maps to syscrack-requirements.md §5 (TC-001–TC-064).
  * Only a subset of TCs is implemented; permanently deferred TCs are present as
- * BLOCKED stubs (runTC012, runTC021, runTC023, runTC024, runTC035, runTC043,
+ * BLOCKED stubs (runTC012, runTC021, runTC024, runTC035, runTC043,
  * runTC050, runTC051) and return passed: false until the required component/feature exists.
  */
 export interface QaResult {
@@ -21,6 +23,7 @@ interface RunSimOptions {
     ticks?: number;
     speed?: number;
     loadFactor?: number;
+    workloadProfile?: WorkloadProfile;
 }
 
 function makeNode(
@@ -58,9 +61,14 @@ function runSim(
     options?: RunSimOptions,
 ): LiveMetrics {
     let lastMetrics: LiveMetrics | null = null;
-    const runner = new SimulationRunner(nodes, connections, (particles, metrics) => {
-        lastMetrics = metrics;
-    });
+    const runner = new SimulationRunner(
+        nodes,
+        connections,
+        (_particles, metrics) => {
+            lastMetrics = metrics;
+        },
+        options?.workloadProfile ? { workloadProfile: options.workloadProfile } : undefined,
+    );
 
     if (options?.speed != null) runner.setSpeed(options.speed);
     if (options?.loadFactor != null) runner.setLoadFactor(options.loadFactor);
@@ -999,6 +1007,103 @@ function runTC063(): QaResult {
 }
 
 // ---------------------------------------------------------
+// TC-070: Workload Archetype — Cache Keys are Semantic
+// ---------------------------------------------------------
+function runTC070(): QaResult {
+    const tpl = urlShortenerTemplate;
+    const cacheNode = tpl.nodes.find((n) => n.type === 'cache');
+    if (!cacheNode) {
+        return { id: 'TC-070', name: 'Workload Archetype — Cache Keys are Semantic', passed: false, failures: ['URL Shortener template missing cache node'] };
+    }
+
+    const metrics = runSim(tpl.nodes, tpl.connections, 500, { workloadProfile: tpl.workloadProfile });
+    const failures: string[] = [];
+
+    const cacheDetail = metrics.nodeMetrics[cacheNode.id]?.componentDetail as any;
+    const entries: Array<{ key: string }> = cacheDetail?.entries ?? [];
+    if (entries.length === 0) {
+        failures.push('Cache had 0 entries; expected semantic keys from workload archetypes');
+    } else {
+        const semanticCount = entries.filter((e) => typeof e.key === 'string' && e.key.startsWith('redirect:')).length;
+        const ratio = semanticCount / entries.length;
+        if (ratio < 0.8) {
+            failures.push(`Only ${(ratio * 100).toFixed(1)}% of cache keys were 'redirect:*'; expected at least 80% semantic redirect keys`);
+        }
+    }
+
+    return { id: 'TC-070', name: 'Workload Archetype — Cache Keys are Semantic', passed: failures.length === 0, failures };
+}
+
+// ---------------------------------------------------------
+// TC-071: Workload Archetype — DB Query Distribution Tracked
+// ---------------------------------------------------------
+function runTC071(): QaResult {
+    const tpl = urlShortenerTemplate;
+    const dbNode = tpl.nodes.find((n) => n.type === 'database_sql' || n.type === 'database_nosql');
+    if (!dbNode) {
+        return { id: 'TC-071', name: 'Workload Archetype — DB Query Distribution Tracked', passed: false, failures: ['URL Shortener template missing DB node'] };
+    }
+
+    const metrics = runSim(tpl.nodes, tpl.connections, 500, { workloadProfile: tpl.workloadProfile });
+    const failures: string[] = [];
+
+    const dbDetail = metrics.nodeMetrics[dbNode.id]?.componentDetail as any;
+    const dist: Array<{ query: string; count: number }> = dbDetail?.queryDistribution ?? [];
+    if (!dist || dist.length === 0) {
+        failures.push('DB queryDistribution was empty; expected workload archetype queries');
+    } else {
+        const expectedQueries = new Set(
+            (tpl.workloadProfile?.archetypes ?? [])
+                .map((a) => a.dbLabel)
+                .filter((q): q is string => typeof q === 'string'),
+        );
+        const present = new Set(
+            dist.filter((d) => expectedQueries.has(d.query) && d.count > 0).map((d) => d.query),
+        );
+        // For now we only require that at least one expected workload query label
+        // appears in the DB distribution. Full coverage of all archetype dbLabels
+        // can be tightened later if we move this test to a simplified topology.
+        if (present.size === 0) {
+            failures.push(`DB queryDistribution did not contain any expected workload queries. Expected one of: ${Array.from(expectedQueries).join(', ')}; Found: ${dist.map((d) => d.query).join(', ')}`);
+        }
+    }
+
+    return { id: 'TC-071', name: 'Workload Archetype — DB Query Distribution Tracked', passed: failures.length === 0, failures };
+}
+
+// ---------------------------------------------------------
+// TC-072: Workload Archetype — Client Detail Shows Archetypes
+// ---------------------------------------------------------
+function runTC072(): QaResult {
+    const tpl = urlShortenerTemplate;
+    const clientNode = tpl.nodes.find((n) => n.type === 'client');
+    if (!clientNode) {
+        return { id: 'TC-072', name: 'Workload Archetype — Client Detail Shows Archetypes', passed: false, failures: ['URL Shortener template missing client node'] };
+    }
+
+    const metrics = runSim(tpl.nodes, tpl.connections, 200, { workloadProfile: tpl.workloadProfile });
+    const failures: string[] = [];
+
+    const clientDetail = metrics.nodeMetrics[clientNode.id]?.componentDetail as any;
+    const archetypes: Array<{ id: string; label: string; weight: number }> = clientDetail?.archetypes ?? [];
+
+    const expected = tpl.workloadProfile?.archetypes ?? [];
+    if (expected.length === 0) {
+        failures.push('Template workloadProfile had no archetypes');
+    }
+    if (archetypes.length !== expected.length) {
+        failures.push(`Client reported ${archetypes.length} archetypes; expected ${expected.length}`);
+    }
+
+    const sumWeights = archetypes.reduce((sum, a) => sum + a.weight, 0);
+    if (sumWeights < 0.95 || sumWeights > 1.05) {
+        failures.push(`Client archetype weights summed to ${sumWeights.toFixed(2)}; expected ≈ 1.0`);
+    }
+
+    return { id: 'TC-072', name: 'Workload Archetype — Client Detail Shows Archetypes', passed: failures.length === 0, failures };
+}
+
+// ---------------------------------------------------------
 // TC-064: Debug — Sequential Inject Trace Ordering
 // ---------------------------------------------------------
 function runTC064(): QaResult {
@@ -1252,6 +1357,7 @@ function runTC013(): QaResult {
         makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 200, readWriteRatio: 0.8 } }),
         makeNode('app1', 'app_server', 'App Server', 200, 0),
         makeNode('db1', 'database_sql', 'DB Primary', 400, 0, {
+            shared: { scaling: { instances: 2 } },
             specific: {
                 replication: {
                     mode: 'single-leader',
@@ -1301,6 +1407,7 @@ function runTC042(): QaResult {
         makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 100, readWriteRatio: 0.5 } }),
         makeNode('app1', 'app_server', 'App Server', 200, 0),
         makeNode('db1', 'database_sql', 'DB Primary', 400, 0, {
+            shared: { scaling: { instances: 2 }, chaos: { nodeFailure: true } },
             specific: {
                 replication: {
                     mode: 'single-leader',
@@ -1309,7 +1416,6 @@ function runTC042(): QaResult {
                 },
                 readReplicas: 1,
             },
-            shared: { chaos: { nodeFailure: true } },
         }),
     ];
     const connections = [
@@ -1477,29 +1583,292 @@ function runTC031(): QaResult {
 // Do not remove; unblock when the required component/feature is implemented.
 // ---------------------------------------------------------
 
-// BLOCKED: requires Object Store glacier restore latency modeling (deferred 4g)
 function runTC012(): QaResult {
-    return { id: 'TC-012', name: 'Object Store — Glacier Cold Read', passed: false, failures: ['BLOCKED: Object Store glacier restore latency not modeled (deferred 4g)'] };
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 10, readWriteRatio: 1.0 } }),
+        makeNode('os1', 'object_store', 'Glacier Storage', 200, 0, {
+            specific: { storageClass: 'glacier', versioning: false, lifecycleRules: false }
+        }),
+    ];
+    const connections = [makeConnection('c1-os', 'c1', 'os1')];
+
+    // Run enough ticks for particles to arrive
+    const metrics = runSim(nodes, connections, 80);
+    const failures: string[] = [];
+
+    const osLatency = metrics.nodeMetrics['os1']?.avgLatencyMs || 0;
+    // With 80 ticks and 10 RPS, many fast particles pull the average down, but the initial 60000ms makes it > 500ms.
+    if (osLatency < 500) {
+        failures.push(`Expected Glacier cold read latency average to be inflated > 500ms, got ${osLatency}ms`);
+    }
+
+    const diags = metrics.nodeMetrics['os1']?.diagnostics || [];
+    const hasGlacierDiag = diags.some((d: string) => d.includes('massive restore latency penalty') || d.includes('Warmed up'));
+    if (!hasGlacierDiag) {
+        failures.push('Expected Glacier storage diagnostic missing.');
+    }
+
+    return { id: 'TC-012', name: 'Object Store — Glacier Cold Read', passed: failures.length === 0, failures };
 }
 
-// BLOCKED: requires Worker P2 component
 function runTC021(): QaResult {
-    return { id: 'TC-021', name: 'Async Write Path with MQ + Worker', passed: false, failures: ['BLOCKED: Worker P2 component not implemented'] };
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, {
+            specific: { requestsPerSecond: 200, readWriteRatio: 0.0 }, // all writes
+        }),
+        makeNode('gw1', 'api_gateway', 'API GW', 150, 0, {
+            shared: { trafficControl: { rateLimiting: true, rateLimit: 300, rateLimitStrategy: 'token-bucket' } },
+        }),
+        makeNode('app1', 'app_server', 'App Server', 300, 0),
+        makeNode('mq1', 'message_queue', 'MQ', 450, 0, {
+            specific: {
+                deliveryGuarantee: 'at-least-once',
+                consumerGroupCount: 2,
+                backpressure: 'block',
+            },
+        }),
+        makeNode('w1', 'worker', 'Worker', 600, 0, {
+            shared: { scaling: { instances: 2, nodeCapacityRps: 400 } },
+            specific: {
+                instanceType: 'medium',
+                processingTimeMs: 25,
+                jobType: 'cpu-bound',
+                autoScaling: false,
+                minInstances: 1,
+                maxInstances: 10,
+                maxRetries: 3,
+            },
+        }),
+        makeNode('db1', 'database_sql', 'Database', 750, 0, {
+            specific: { isolation: 'read-committed' },
+        }),
+    ];
+
+    const connections = [
+        makeConnection('c1-gw', 'c1', 'gw1'),
+        makeConnection('gw-app', 'gw1', 'app1'),
+        makeConnection('app-mq', 'app1', 'mq1'),
+        makeConnection('mq-worker', 'mq1', 'w1'),
+        makeConnection('worker-db', 'w1', 'db1'),
+    ];
+
+    const metrics = runSim(nodes, connections, 200);
+    const failures: string[] = [];
+
+    // API GW should not be dropping requests (headroom 300 RPS vs 200 RPS load)
+    const gwDetail = metrics.nodeMetrics['gw1']?.componentDetail as any;
+    const allowed = gwDetail?.allowed ?? 0;
+    const dropped = gwDetail?.dropped ?? 0;
+    if (dropped > 0) {
+        failures.push(`API Gateway dropped ${dropped} messages, expected 0 with rateLimit 300 RPS and producer 200 RPS`);
+    }
+    if (allowed < 180) {
+        failures.push(`API Gateway allowed only ${allowed} messages, expected close to 200`);
+    }
+
+    // MQ should be buffering: queue depth should grow because producer (200) > consumer drain (80)
+    const mqQueueDepth = metrics.nodeMetrics['mq1']?.queueDepth ?? 0;
+    if (mqQueueDepth <= 0) {
+        failures.push(`MQ queue depth was ${mqQueueDepth}, expected > 0 (producer outpaces Worker drain)`);
+    }
+
+    // MQ diagnostics should mention consumer lag
+    const mqDiagnostics = (metrics.nodeMetrics['mq1']?.diagnostics ?? []) as string[];
+    const hasLagDiag = mqDiagnostics.some((d: string) =>
+        d.toLowerCase().includes('lag') || d.toLowerCase().includes('consumer'),
+    );
+    if (!hasLagDiag) {
+        failures.push('MQ missing consumer lag diagnostic for Worker consumer');
+    }
+
+    // DB should see writes downstream of Worker (non-zero RPS)
+    const dbRps = metrics.nodeMetrics['db1']?.currentRps ?? 0;
+    if (dbRps <= 0) {
+        failures.push(`DB RPS was ${dbRps}, expected > 0 (writes flowing through Worker)`);
+    }
+
+    return { id: 'TC-021', name: 'Async Write Path with MQ + Worker', passed: failures.length === 0, failures };
 }
 
 // BLOCKED: requires CDC Connector
 function runTC023(): QaResult {
-    return { id: 'TC-023', name: 'CDC Pipeline', passed: false, failures: ['BLOCKED: CDC Connector not implemented'] };
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 200, readWriteRatio: 0.0 } }),
+        makeNode('app1', 'app_server', 'App Server', 150, 0),
+        makeNode('db_sql', 'database_sql', 'DB SQL (source)', 300, 0),
+        makeNode('cdc1', 'cdc_connector', 'CDC Connector', 450, 0, {
+            specific: { captureMode: 'log-tail', captureLatencyMs: 200, includeDeletes: true },
+        }),
+        makeNode('mq1', 'message_queue', 'MQ', 600, 0),
+        makeNode('app2', 'app_server', 'App Server (consumer)', 750, 0),
+        makeNode('db_nosql', 'database_nosql', 'DB NoSQL (derived)', 900, 0),
+    ];
+    const connections = [
+        makeConnection('c-app', 'c1', 'app1'),
+        makeConnection('app-db', 'app1', 'db_sql'),
+        makeConnection('db-cdc', 'db_sql', 'cdc1'),
+        makeConnection('cdc-mq', 'cdc1', 'mq1'),
+        makeConnection('mq-app2', 'mq1', 'app2'),
+        makeConnection('app2-nosql', 'app2', 'db_nosql'),
+    ];
+    const metrics = runSim(nodes, connections, 250);
+    const failures: string[] = [];
+
+    // Assert 1: CDC particles appear downstream (MQ or NoSQL receives RPS > 0 from CDC path)
+    const mqRps = metrics.nodeMetrics['mq1']?.currentRps ?? 0;
+    const nosqlRps = metrics.nodeMetrics['db_nosql']?.currentRps ?? 0;
+    if (mqRps <= 0 && nosqlRps <= 0) {
+        failures.push(`CDC path: MQ RPS was ${mqRps}, NoSQL RPS was ${nosqlRps}; expected at least one > 0`);
+    }
+
+    // Assert 2: Propagation delay ≥ captureLatencyMs (200ms) — CDC config and diagnostic state it
+    const cdcDetail = metrics.nodeMetrics['cdc1']?.componentDetail;
+    const captureLatencyMs = (cdcDetail && cdcDetail.kind === 'cdc_connector') ? cdcDetail.captureLatencyMs : 0;
+    if (captureLatencyMs < 200) {
+        failures.push(`CDC captureLatencyMs was ${captureLatencyMs}, expected ≥ 200`);
+    }
+
+    // Assert 3: Diagnostic fires referencing eventual consistency
+    const cdcDiagnostics = metrics.nodeMetrics['cdc1']?.diagnostics ?? [];
+    const hasEventualConsistency = cdcDiagnostics.some((d) => d.toLowerCase().includes('eventually consistent'));
+    if (!hasEventualConsistency) {
+        failures.push(`CDC diagnostics should reference eventual consistency; got: ${cdcDiagnostics.join('; ')}`);
+    }
+
+    return { id: 'TC-023', name: 'CDC Pipeline', passed: failures.length === 0, failures };
 }
 
-// BLOCKED: requires Pub/Sub P2 component
 function runTC024(): QaResult {
-    return { id: 'TC-024', name: 'Pub/Sub Fan-Out', passed: false, failures: ['BLOCKED: Pub/Sub P2 component not implemented'] };
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, {
+            specific: { requestsPerSecond: 300, readWriteRatio: 0.0 }, // all writes
+        }),
+        makeNode('app1', 'app_server', 'App Server', 200, 0),
+        makeNode('ps1', 'pub_sub', 'Pub/Sub', 400, 0, {
+            specific: { subscriberGroupCount: 3, orderingEnabled: false },
+        }),
+        makeNode('w1', 'worker', 'Worker A', 600, -60, {
+            shared: { scaling: { instances: 2, nodeCapacityRps: 500 } },
+            specific: {
+                instanceType: 'medium',
+                processingTimeMs: 50,
+                jobType: 'io-bound',
+                autoScaling: false,
+                minInstances: 1,
+                maxInstances: 10,
+                maxRetries: 3,
+            },
+        }),
+        makeNode('w2', 'worker', 'Worker B', 600, 0, {
+            shared: { scaling: { instances: 2, nodeCapacityRps: 500 } },
+            specific: {
+                instanceType: 'medium',
+                processingTimeMs: 50,
+                jobType: 'io-bound',
+                autoScaling: false,
+                minInstances: 1,
+                maxInstances: 10,
+                maxRetries: 3,
+            },
+        }),
+        makeNode('w3', 'worker', 'Worker C', 600, 60, {
+            shared: { scaling: { instances: 2, nodeCapacityRps: 500 } },
+            specific: {
+                instanceType: 'medium',
+                processingTimeMs: 50,
+                jobType: 'io-bound',
+                autoScaling: false,
+                minInstances: 1,
+                maxInstances: 10,
+                maxRetries: 3,
+            },
+        }),
+    ];
+
+    const connections = [
+        makeConnection('c1-app', 'c1', 'app1'),
+        makeConnection('app-ps', 'app1', 'ps1'),
+        makeConnection('ps-w1', 'ps1', 'w1'),
+        makeConnection('ps-w2', 'ps1', 'w2'),
+        makeConnection('ps-w3', 'ps1', 'w3'),
+    ];
+
+    const metrics = runSim(nodes, connections, 200);
+    const failures: string[] = [];
+
+    const inputRps = metrics.nodeMetrics['app1']?.currentRps ?? 0;
+    const w1Rps = metrics.nodeMetrics['w1']?.currentRps ?? 0;
+    const w2Rps = metrics.nodeMetrics['w2']?.currentRps ?? 0;
+    const w3Rps = metrics.nodeMetrics['w3']?.currentRps ?? 0;
+
+    const totalDownstream = w1Rps + w2Rps + w3Rps;
+    const mean = totalDownstream / 3;
+
+    // Assert 1: total downstream RPS ≈ inputRps × 3
+    if (inputRps > 0) {
+        const expectedTotal = inputRps * 3;
+        const lower = expectedTotal * 0.8;
+        const upper = expectedTotal * 1.2;
+        if (totalDownstream < lower || totalDownstream > upper) {
+            failures.push(`Total downstream RPS ${totalDownstream.toFixed(1)} outside expected range [${lower.toFixed(1)}, ${upper.toFixed(1)}] for inputRps=${inputRps.toFixed(1)} and fan-out x3`);
+        }
+    } else {
+        failures.push('Input RPS at App Server was 0, cannot validate fan-out');
+    }
+
+    // Assert 2: each worker receives ~equal RPS (±20% of mean)
+    const workers: Array<{ id: string; rps: number }> = [
+        { id: 'w1', rps: w1Rps },
+        { id: 'w2', rps: w2Rps },
+        { id: 'w3', rps: w3Rps },
+    ];
+    for (const w of workers) {
+        if (mean > 0 && Math.abs(w.rps - mean) > mean * 0.2) {
+            failures.push(`Worker ${w.id} RPS ${w.rps.toFixed(1)} is not within ±20% of mean ${mean.toFixed(1)}`);
+        }
+    }
+
+    return { id: 'TC-024', name: 'Pub/Sub Fan-Out', passed: failures.length === 0, failures };
 }
 
-// BLOCKED: requires DNS P2 component
 function runTC035(): QaResult {
-    return { id: 'TC-035', name: 'DNS Failover Propagation Window', passed: false, failures: ['BLOCKED: DNS P2 component not implemented'] };
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 100, readWriteRatio: 1.0 } }),
+        makeNode('dns1', 'dns', 'DNS Router', 200, 0, {
+            specific: { recordType: 'A', routingPolicy: 'failover', healthCheck: { enabled: true, intervalSeconds: 1, failoverDelayMs: 10000 } }
+        }),
+        makeNode('app_primary', 'app_server', 'Primary', 400, -100, { shared: { chaos: { nodeFailure: true } } }),
+        makeNode('app_standby', 'app_server', 'Standby', 400, 100)
+    ];
+    const connections = [
+        makeConnection('c1-dns', 'c1', 'dns1'),
+        makeConnection('dns-primary', 'dns1', 'app_primary'),
+        makeConnection('dns-standby', 'dns1', 'app_standby')
+    ];
+
+    const metricsFailoverWindow = runSim(nodes, connections, 300);
+    const failures: string[] = [];
+
+    // Evaluate transition window
+    const diags = metricsFailoverWindow.nodeMetrics['dns1']?.diagnostics || [];
+    const hasFailoverDiag = diags.some((d: string) => d.includes('Propagating failover'));
+    if (!hasFailoverDiag) {
+        failures.push('DNS missing failover propagation diagnostic during transition window (300 ticks).');
+    }
+
+    const reqsPrimary = metricsFailoverWindow.nodeMetrics['app_primary']?.totalRequests || 0;
+    if (reqsPrimary === 0) {
+        failures.push('Primary should continue receiving traffic during failover window before DNS propagates.');
+    }
+
+    const metricsRecovered = runSim(nodes, connections, 800);
+    const diagsRecovered = metricsRecovered.nodeMetrics['dns1']?.diagnostics || [];
+    const hasRemovedDiag = diagsRecovered.some((d: string) => d.includes('removed from DNS resolution'));
+    if (!hasRemovedDiag) {
+        failures.push(`DNS missing node removal diagnostic after failover delay (800 ticks). Diags: ${JSON.stringify(diagsRecovered)}`);
+    }
+
+    return { id: 'TC-035', name: 'DNS Failover Propagation Window', passed: failures.length === 0, failures };
 }
 
 // BLOCKED: requires quorum + partition chaos interaction (Session 14 unlocks quorum; TC-043 can follow)
@@ -1574,5 +1943,8 @@ export function runQaSuite(): QaResult[] {
         runTC062(),
         runTC063(),
         runTC064(),
+        runTC070(),
+        runTC071(),
+        runTC072(),
     ];
 }

@@ -47,6 +47,7 @@ export type CanvasComponentType =
     | 'shard'
     | 'replica'
     | 'partition'
+    | 'cdc_connector'
     // Chaos
     | 'chaos_latency'
     | 'chaos_failure'
@@ -161,6 +162,27 @@ export interface LoadBalancerSpecificConfig {
     backendWeights?: Record<string, number>;
 }
 
+export interface DNSSpecificConfig {
+    recordType: 'A' | 'CNAME' | 'ALIAS';
+    ttlSeconds: number;
+    routingPolicy: 'simple' | 'weighted' | 'latency' | 'failover' | 'geolocation';
+    healthCheck: {
+        enabled: boolean;
+        intervalSeconds: number;
+        failoverDelayMs: number;
+    };
+}
+
+export interface ProxySpecificConfig {
+    algorithm: 'round-robin' | 'least-connections' | 'ip-hash' | 'weighted';
+    connectionPooling: boolean;
+    maxConnections: number;
+    healthCheckInterval: number;
+    connectionPoolSize: number;  // max simultaneous downstream connections
+    waitTimeoutMs: number;       // ms before queued request errors
+    maxQueueDepth: number;       // max requests that can wait before hard error
+}
+
 export interface APIGatewaySpecificConfig {
     authEnabled: boolean;
     cors: boolean;
@@ -172,6 +194,16 @@ export interface AppServerSpecificConfig {
     autoScaling: boolean;
     minInstances?: number;
     maxInstances?: number;
+}
+
+export interface WorkerSpecificConfig {
+    instanceType: 'small' | 'medium' | 'large' | 'xlarge';
+    processingTimeMs: number;
+    jobType: 'cpu-bound' | 'io-bound' | 'mixed';
+    autoScaling: boolean;
+    minInstances: number;
+    maxInstances: number;
+    maxRetries: number;
 }
 
 export interface CacheSpecificConfig {
@@ -218,16 +250,38 @@ export interface MessageQueueSpecificConfig {
     retentionPeriod: number;
 }
 
+export interface PubSubSpecificConfig {
+    engine: 'kafka' | 'google-pubsub' | 'sns-sqs';
+    topicCount: number;
+    subscriberGroupCount: number;
+    deliveryMode: 'push' | 'pull';
+    retentionHours: number;
+    orderingEnabled: boolean;
+}
+
+export interface CDCConnectorSpecificConfig {
+    captureMode: 'log-tail' | 'trigger-based' | 'timestamp-polling';
+    captureLatencyMs: number;
+    includeDeletes: boolean;
+    snapshotOnStart: boolean;
+    snapshotLatencyMs: number;
+}
+
 export type ComponentSpecificConfig =
     | CDNSpecificConfig
+    | DNSSpecificConfig
     | LoadBalancerSpecificConfig
+    | ProxySpecificConfig
     | APIGatewaySpecificConfig
     | AppServerSpecificConfig
+    | WorkerSpecificConfig
     | CacheSpecificConfig
     | DatabaseSQLSpecificConfig
     | DatabaseNoSQLSpecificConfig
     | ObjectStoreSpecificConfig
     | MessageQueueSpecificConfig
+    | PubSubSpecificConfig
+    | CDCConnectorSpecificConfig
     | Record<string, unknown>;
 
 // ============ Canvas Node ============

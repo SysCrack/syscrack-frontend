@@ -9,9 +9,10 @@ import type { CanvasNode, CanvasConnection } from '../types/canvas';
 import { SimulationRunner } from './SimulationRunner';
 import type { RequestParticle, LiveMetrics } from './SimulationRunner';
 import type { RequestTrace, RequestMethod, PayloadSize } from './types';
+import type { WorkloadProfile } from '../templates/types';
 
 type InMessage =
-    | { type: 'init'; nodes: CanvasNode[]; connections: CanvasConnection[]; speed?: number; loadFactor?: number }
+    | { type: 'init'; nodes: CanvasNode[]; connections: CanvasConnection[]; speed?: number; loadFactor?: number; workloadProfile?: WorkloadProfile }
     | { type: 'start' }
     | { type: 'pause' }
     | { type: 'resumeDebug' }
@@ -82,6 +83,7 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
                     onTraceComplete: (trace) => {
                         self.postMessage({ type: 'trace', trace } satisfies WorkerTraceMessage);
                     },
+                    workloadProfile: msg.workloadProfile,
                 },
             );
             if (typeof msg.speed === 'number') runner.setSpeed(msg.speed);

@@ -14,6 +14,7 @@
  *   - DB/Queue/Store: absorbs (leaf node)
  */
 import type { CanvasNode, CanvasConnection, CanvasComponentType } from '@/lib/types/canvas';
+import type { WorkloadProfile, RequestArchetype } from '@/lib/templates/types';
 import { PROTOCOL_FACTORS } from '@/lib/connectionRules';
 import type { NodeSimSummary, NodeDetailMetrics, CacheEntry, RequestTraceEvent, RequestTrace, RequestMethod, ReadWrite, PayloadSize } from './types';
 import { methodToReadWrite, PAYLOAD_LATENCY_MULTIPLIER } from './types';
@@ -21,7 +22,11 @@ import { classifyEdges, EdgeSemantics, ChaosPolicy, isMultiDBWrite } from './Top
 import { MessageQueueModel } from './models/MessageQueueModel';
 import { LoadBalancerModel } from './models/LoadBalancerModel';
 import { CacheModel } from './models/CacheModel';
+import { WorkerModel } from './models/WorkerModel';
+import { PubSubModel } from './models/PubSubModel';
+import { CDCModel } from './models/CDCModel';
 import { DBReplicationModel } from './models/DatabaseModel';
+import { DNSModel } from './models/DNSModel';
 
 // ── Cache entry simulator (bounded entries, eviction by policy) ──
 
@@ -165,7 +170,11 @@ export interface RequestParticle {
     method?: RequestMethod;
     readWrite?: ReadWrite;
     payloadSize?: PayloadSize;
-    path?: string;        // e.g. /users/123
+    path?: string;        // e.g. /users/123 or redirect:x7k2m
+    archetypeId?: string; // e.g. 'redirect-lookup'
+    archetypeLabel?: string; // e.g. 'Redirect lookup'
+    /** True when path comes from a semantic workload archetype, not a generic fallback. */
+    hasSemanticPath?: boolean;
 }
 
 // ── Live metrics ──
@@ -241,12 +250,29 @@ export class SimulationRunner {
     private lbSentRequests: Map<string, Map<string, number>> = new Map();
     // Proxy: requests sent per backend (nodeId -> targetId -> count) — separate from LB to avoid naming confusion
     private proxySentRequests: Map<string, Map<string, number>> = new Map();
+    // Proxy: connection pool + queue state
+    private proxyActiveConnections: Map<string, number> = new Map();
+    private proxyQueueDepth: Map<string, number> = new Map();
+
+    // Workload Profile: Semantic Query Distribution
+    private dbQueryDistribution = new Map<string, Map<string, number>>();
+    private mqQueryDistribution = new Map<string, Map<string, number>>();
 
     // Message Queue State
     // Rather than raw Maps, we store MessageQueueModel instances
     public mqModels = new Map<string, MessageQueueModel>();
     public mqProcessAccumulator = new Map<string, number>(); // Stores fractional processed messages to emit
     public previousNodeFailure = new Map<string, boolean>(); // Tracks node fail state for MQ at-least-once replay
+
+    // Workers
+    public workerModels = new Map<string, WorkerModel>();
+
+    public pubSubModels = new Map<string, PubSubModel>();
+
+    public cdcModels = new Map<string, CDCModel>();
+
+    public dnsModels = new Map<string, DNSModel>();
+    public glacierWarmedNodes = new Set<string>();
 
     // API Gateway: allowance per step (reset each step), dropped cumulative
     private apiGatewayAllowanceRemaining: Map<string, number> = new Map();
@@ -286,21 +312,31 @@ export class SimulationRunner {
         writeBehindDelayMs: number;
     }> = [];
 
+    /** CDC: deferred change events from DB writes, emitted from CDC node in step() */
+    private scheduledCDCEvents: Array<{
+        dueTick: number;
+        cdcNodeId: string;
+        count: number;
+        readWrite: 'write';
+    }> = [];
+
     // Distributed Transactions Diagnostics
     private multiDbNoneWarning = new Set<string>();
     private twoPhaseCoordinatorBlocked = new Set<string>();
 
     speed = 1.0;
     loadFactor = 1.0;
+    private workloadProfile?: WorkloadProfile;
 
     constructor(
         private nodes: CanvasNode[],
         private connections: CanvasConnection[],
         private callback: RunnerCallback,
-        options?: { onTraceComplete?: (trace: RequestTrace) => void },
+        options?: { onTraceComplete?: (trace: RequestTrace) => void; workloadProfile?: WorkloadProfile },
     ) {
         this.buildGraph();
         this.onTraceComplete = options?.onTraceComplete;
+        this.workloadProfile = options?.workloadProfile;
     }
 
     /** Update node configurations dynamically (e.g., when instances are changed during simulation) */
@@ -345,6 +381,8 @@ export class SimulationRunner {
             }
             if (node.type === 'proxy') {
                 this.proxySentRequests.set(node.id, new Map());
+                this.proxyActiveConnections.set(node.id, 0);
+                this.proxyQueueDepth.set(node.id, 0);
             }
             if (node.type === 'message_queue') {
                 this.mqModels.set(node.id, new MessageQueueModel(node));
@@ -354,6 +392,18 @@ export class SimulationRunner {
             }
             if (node.type === 'database_sql' || node.type === 'database_nosql') {
                 this.dbModels.set(node.id, new DBReplicationModel(node));
+            }
+            if (node.type === 'pub_sub') {
+                this.pubSubModels.set(node.id, new PubSubModel(node));
+            }
+            if (node.type === 'worker') {
+                this.workerModels.set(node.id, new WorkerModel(node));
+            }
+            if (node.type === 'cdc_connector') {
+                this.cdcModels.set(node.id, new CDCModel(node));
+            }
+            if (node.type === 'dns') {
+                this.dnsModels.set(node.id, new DNSModel(node));
             }
         }
         for (const conn of this.connections) {
@@ -365,6 +415,27 @@ export class SimulationRunner {
 
         // Pre-compute routing semantics for all edges
         this.edgeSemantics = classifyEdges(this.nodes, this.connections);
+
+        // Initialize per-node query distributions for DBs and MQs so arrival
+        // tracking always has a map to write into (constructor-only path).
+        this.initQueryDistributions();
+    }
+
+    /**
+     * Initialize per-node query distribution maps for databases and message queues.
+     * Shared between constructor-time graph build and reset() to avoid drift.
+     */
+    private initQueryDistributions() {
+        this.dbQueryDistribution.clear();
+        this.mqQueryDistribution.clear();
+        for (const node of this.nodes) {
+            if (node.type === 'database_sql' || node.type === 'database_nosql') {
+                this.dbQueryDistribution.set(node.id, new Map());
+            }
+            if (node.type === 'message_queue') {
+                this.mqQueryDistribution.set(node.id, new Map());
+            }
+        }
     }
 
     start() {
@@ -409,9 +480,16 @@ export class SimulationRunner {
         this.cacheFlushAppliedAtTick.clear();
         this.lbSentRequests.clear();
         this.proxySentRequests.clear();
+        this.proxyActiveConnections.clear();
+        this.proxyQueueDepth.clear();
         this.mqModels.clear(); // Clear the MessageQueueModels
         this.mqProcessAccumulator.clear();
         this.previousNodeFailure.clear();
+        this.workerModels.clear();
+        this.pubSubModels.clear();
+        this.cdcModels.clear();
+        this.dnsModels.clear();
+        this.glacierWarmedNodes.clear();
 
         this.apiGatewayAllowanceRemaining.clear();
         this.apiGatewayDropped.clear();
@@ -421,7 +499,13 @@ export class SimulationRunner {
             if (node.type === 'database_sql' || node.type === 'database_nosql') {
                 this.dbModels.set(node.id, new DBReplicationModel(node));
             }
+            if (node.type === 'message_queue') {
+                this.mqModels.set(node.id, new MessageQueueModel(node));
+            }
         }
+
+        // Reset per-node query distributions in sync with DB/MQ model reset.
+        this.initQueryDistributions();
 
         this.circuitBreakerState.clear();
         this.circuitBreakerTripTick.clear();
@@ -431,6 +515,7 @@ export class SimulationRunner {
         this.lbModels.clear();
         this.dynamicInstances.clear();
         this.scheduledWriteBehindWrites = [];
+        this.scheduledCDCEvents = [];
         for (const node of this.nodes) {
             this.nodeActiveCount.set(node.id, 0);
             this.nodeRecentArrivals.set(node.id, 0);
@@ -466,12 +551,26 @@ export class SimulationRunner {
             if (node.type === 'proxy') {
                 this.proxySentRequests.set(node.id, new Map());
                 this.lbModels.set(node.id, new LoadBalancerModel(node));
+                this.proxyActiveConnections.set(node.id, 0);
+                this.proxyQueueDepth.set(node.id, 0);
             }
             if (node.type === 'message_queue') {
                 this.mqModels.set(node.id, new MessageQueueModel(node));
             }
             if (node.type === 'api_gateway') {
                 this.apiGatewayDropped.set(node.id, 0);
+            }
+            if (node.type === 'pub_sub') {
+                this.pubSubModels.set(node.id, new PubSubModel(node));
+            }
+            if (node.type === 'worker') {
+                this.workerModels.set(node.id, new WorkerModel(node));
+            }
+            if (node.type === 'cdc_connector') {
+                this.cdcModels.set(node.id, new CDCModel(node));
+            }
+            if (node.type === 'dns') {
+                this.dnsModels.set(node.id, new DNSModel(node));
             }
         }
         nextParticleId = 0;
@@ -654,12 +753,17 @@ export class SimulationRunner {
             const tickDurationMs = 100 / this.speed;
             dbModel.tickCompaction(this.tick, tickDurationMs);
         }
-        // Reset API Gateway allowance this step (rate limit per second -> per dt)
+        // Reset/accumulate API Gateway allowance this step (token bucket: rate limit per second -> tokens per dt)
         for (const node of this.nodes) {
             if (node.type === 'api_gateway') {
                 const tc = node.sharedConfig.trafficControl;
                 const limit = (tc?.rateLimiting && typeof tc.rateLimit === 'number') ? tc.rateLimit : 10000;
-                this.apiGatewayAllowanceRemaining.set(node.id, limit * (cappedDt / 1000));
+                const increment = limit * (cappedDt / 1000);
+                const prevAllowance = this.apiGatewayAllowanceRemaining.get(node.id) ?? 0;
+                // Cap bucket to allow short bursts but prevent unbounded growth
+                const maxBucket = limit * 2;
+                const nextAllowance = Math.min(maxBucket, prevAllowance + increment);
+                this.apiGatewayAllowanceRemaining.set(node.id, nextAllowance);
             }
         }
 
@@ -707,6 +811,18 @@ export class SimulationRunner {
             }
         }
 
+        // 2c. Drain due CDC change events — emit from CDC node to its downstream
+        const dueCDC = this.scheduledCDCEvents.filter((e) => e.dueTick <= this.tick);
+        this.scheduledCDCEvents = this.scheduledCDCEvents.filter((e) => e.dueTick > this.tick);
+        for (const event of dueCDC) {
+            const cdcModel = this.cdcModels.get(event.cdcNodeId);
+            cdcModel?.recordEmit(event.count);
+            const outEdges = this.connectionsBySource.get(event.cdcNodeId) ?? [];
+            for (const edge of outEdges) {
+                this.emitParticle(edge, event.count, undefined, undefined, undefined, 'cdc');
+            }
+        }
+
         // Advance message queue processing (drain by capacity)
         for (const node of this.nodes) {
             if (node.type !== 'message_queue') continue;
@@ -716,26 +832,39 @@ export class SimulationRunner {
             // Find downstream consumers to determine pulling capacity
             const outEdges = this.connectionsBySource.get(node.id) ?? [];
             let totalConsumerCapacity = 0;
+
             for (const edge of outEdges) {
                 const consumer = this.nodeMap.get(edge.targetId);
-                if (consumer && consumer.type !== 'object_store' && consumer.type !== 'database_sql' && consumer.type !== 'database_nosql') {
-                    // This is a simplification: assuming all non-storage downstream nodes are active consumers pulling from the queue.
-                    const rawCap = (consumer.sharedConfig.scaling?.nodeCapacityRps as number ?? 1000) * (consumer.sharedConfig.scaling?.instances as number ?? 1);
+                if (!consumer) continue;
+
+                // Storage nodes do not actively pull from MQs
+                if (consumer.type === 'object_store' || consumer.type === 'database_sql' || consumer.type === 'database_nosql') {
+                    continue;
+                }
+
+                if (consumer.type === 'worker') {
+                    const workerModel = this.workerModels.get(consumer.id);
+                    if (workerModel) {
+                        totalConsumerCapacity += workerModel.getEffectiveThroughput();
+                    }
+                } else {
+                    const rawCap =
+                        ((consumer.sharedConfig.scaling?.nodeCapacityRps as number) ?? 1000) *
+                        ((consumer.sharedConfig.scaling?.instances as number) ?? 1);
                     totalConsumerCapacity += rawCap;
                 }
             }
 
-            // Fallback: If no consumers connected yet, consumerThroughput is 0 (queue builds up)
-            const consumerThroughput = totalConsumerCapacity;
+            const validConsumers = outEdges.filter((edge) => {
+                const t = this.nodeMap.get(edge.targetId)?.type;
+                return t && t !== 'object_store' && t !== 'database_sql' && t !== 'database_nosql';
+            });
 
-            // Allow specific config to override consumerGroupCount
             const sc = node.sharedConfig as any;
             const c = node.specificConfig as any;
             const consumerGroupCount = c?.consumerGroupCount ?? sc?.scaling?.consumerGroupCount ?? 1;
-
             const guarantee = c?.deliveryGuarantee;
 
-            // At-least-once replay logic: check if any consumer just recovered
             if (guarantee === 'at-least-once') {
                 for (const edge of outEdges) {
                     const consumerId = edge.targetId;
@@ -744,7 +873,6 @@ export class SimulationRunner {
                     const wasFailing = this.previousNodeFailure.get(consumerId) ?? false;
 
                     if (wasFailing && !isFailingNow) {
-                        // Consumer recovered! Replay 5% of all processed messages
                         const replayCount = Math.floor(mqModel.totalProcessed * 0.05);
                         if (replayCount > 0) {
                             mqModel.enqueue(replayCount);
@@ -754,10 +882,14 @@ export class SimulationRunner {
                 }
             }
 
-            // Apply exactly-once throughput reduction (15% overhead for txn coordination)
-            const effectiveConsumerThroughput = guarantee === 'exactly-once'
-                ? consumerThroughput * 0.85
-                : consumerThroughput;
+            let effectiveConsumerThroughput: number;
+            if (validConsumers.length === 0) {
+                effectiveConsumerThroughput = 0;
+            } else {
+                effectiveConsumerThroughput = guarantee === 'exactly-once'
+                    ? totalConsumerCapacity * 0.85
+                    : totalConsumerCapacity;
+            }
 
             const processed = mqModel.dequeue(effectiveConsumerThroughput * (cappedDt / 1000), consumerGroupCount);
 
@@ -824,8 +956,18 @@ export class SimulationRunner {
 
                 while (acc >= 1) {
                     acc -= 1;
-                    const rw = this.sampleReadWrite(node);
-                    this.spawnFromNode(node.id, requestsPerParticle, undefined, undefined, rw);
+                    const arch = this.sampleArchetype(node);
+                    this.spawnFromNode(
+                        node.id,
+                        requestsPerParticle,
+                        undefined,
+                        undefined,
+                        arch.readWrite,
+                        arch.path,
+                        arch.archetypeId,
+                        arch.archetypeLabel,
+                        arch.hasSemanticPath,
+                    );
 
                     this.nodeRecentArrivals.set(
                         node.id,
@@ -964,7 +1106,17 @@ export class SimulationRunner {
 
     // ── Spawn ──
 
-    private spawnFromNode(nodeId: string, count: number, traceId?: string, parentParticle?: RequestParticle, readWriteOverride?: ReadWrite) {
+    private spawnFromNode(
+        nodeId: string,
+        count: number,
+        traceId?: string,
+        parentParticle?: RequestParticle,
+        readWriteOverride?: ReadWrite,
+        pathOverride?: string,
+        archetypeIdOverride?: string,
+        archetypeLabelOverride?: string,
+        hasSemanticPathOverride?: boolean,
+    ) {
         const outConns = this.connectionsBySource.get(nodeId) ?? [];
         const node = this.nodeMap.get(nodeId);
         if (!node) return;
@@ -989,12 +1141,40 @@ export class SimulationRunner {
 
         this.nodeRequestCount.set(nodeId, (this.nodeRequestCount.get(nodeId) ?? 0) + count);
 
+        // Synthesize a parentParticle carrying archetype fields when overrides are provided.
+        // This ensures archetype data propagates through spawnFromLB, spawnFromProxy,
+        // spawnFromCache, spawnFromDNS via their `pp` parameter.
+        if (!parentParticle && (archetypeIdOverride || archetypeLabelOverride || pathOverride || readWriteOverride)) {
+            parentParticle = {
+                id: '__synthetic__',
+                connectionId: '',
+                t: 0,
+                count,
+                color: '',
+                sourceId: nodeId,
+                targetId: '',
+                readWrite: readWriteOverride,
+                path: pathOverride,
+                archetypeId: archetypeIdOverride,
+                archetypeLabel: archetypeLabelOverride,
+                hasSemanticPath: hasSemanticPathOverride,
+            };
+        }
+
         if (nodeType === 'load_balancer') {
             this.spawnFromLB(node, outConns, count, traceId, parentParticle);
         } else if (nodeType === 'proxy') {
             this.spawnFromProxy(node, outConns, count, traceId, parentParticle);
         } else if (nodeType === 'cache' || nodeType === 'cdn') {
             this.spawnFromCache(node, outConns, count, traceId, parentParticle);
+        } else if (nodeType === 'pub_sub') {
+            const pubSubModel = this.pubSubModels.get(node.id);
+            const multiplier = pubSubModel?.getThroughputMultiplier() ?? 1.0;
+            const effectiveCount = Math.ceil(count * multiplier);
+            if (effectiveCount <= 0) return;
+            for (const conn of outConns) {
+                this.emitParticle(conn, effectiveCount, undefined, traceId, parentParticle, readWriteOverride);
+            }
         } else if (nodeType === 'api_gateway') {
             const allowance = this.apiGatewayAllowanceRemaining.get(node.id) ?? 0;
             const allowed = Math.min(count, Math.max(0, allowance));
@@ -1017,6 +1197,8 @@ export class SimulationRunner {
             for (const conn of outConns) {
                 this.emitParticle(conn, allowed, undefined, traceId, parentParticle, readWriteOverride);
             }
+        } else if (nodeType === 'dns') {
+            this.spawnFromDNS(node, outConns, count, traceId, parentParticle);
         } else if (nodeType === 'app_server') {
             const hasCache = outConns.some((c) => this.nodeMap.get(c.targetId)?.type === 'cache');
             const hasDb = outConns.some((c) => {
@@ -1119,7 +1301,8 @@ export class SimulationRunner {
         }
 
         const algo = (node.specificConfig as Record<string, unknown>).algorithm as string || 'round-robin';
-        const outConns = lbModel.getHealthyConnections(outConnsRaw);
+        const outConnsWithoutCBOpen = outConnsRaw.filter((c) => this.circuitBreakerState.get(c.targetId) !== 'open');
+        const outConns = lbModel.getHealthyConnections(outConnsWithoutCBOpen);
 
         if (outConns.length === 0) return;
 
@@ -1199,7 +1382,8 @@ export class SimulationRunner {
         }
 
         const algo = (node.specificConfig as Record<string, unknown>).algorithm as string || 'round-robin';
-        const outConns = proxyModel.getHealthyConnections(outConnsRaw);
+        const outConnsWithoutCBOpen = outConnsRaw.filter((c) => this.circuitBreakerState.get(c.targetId) !== 'open');
+        const outConns = proxyModel.getHealthyConnections(outConnsWithoutCBOpen);
 
         if (outConns.length === 0) return;
 
@@ -1230,6 +1414,25 @@ export class SimulationRunner {
                 const methodStr = pp?.method ? ` ${pp.method}` : '';
                 this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed via proxy to ${targetName} (${algo})`, timestamp: this.tick, method: pp?.method, readWrite: pp?.readWrite });
             }
+        }
+    }
+
+    private spawnFromDNS(node: CanvasNode, outConnsRaw: CanvasConnection[], count: number, traceId?: string, pp?: RequestParticle) {
+        const dnsModel = this.dnsModels.get(node.id);
+        if (!dnsModel) return;
+
+        const outConns = outConnsRaw.filter(c => !dnsModel.isRemoved(c.targetId));
+        if (outConns.length === 0) return;
+
+        // Simple failover: skip removed backends
+        const targetConn = outConns[0];
+
+        // Ensure we emit. Usually clients cache DNS heavily.
+        this.emitParticle(targetConn, count, undefined, traceId, pp);
+
+        if (traceId) {
+            const targetName = this.nodeMap.get(targetConn.targetId)?.name ?? targetConn.targetId;
+            this.addTraceEvent(traceId, { nodeId: node.id, nodeName: node.name, nodeType: node.type, action: `routed to ${targetName} (DNS)`, timestamp: this.tick, method: pp?.method, readWrite: pp?.readWrite });
         }
     }
 
@@ -1272,6 +1475,7 @@ export class SimulationRunner {
 
         let hits = 0;
         let misses = 0;
+        const semanticKey = pp?.hasSemanticPath && pp.path ? pp.path : undefined;
 
         // Traced with path: use path as cache key
         if (traceId && pp?.path && sim) {
@@ -1299,21 +1503,22 @@ export class SimulationRunner {
                 for (let i = 0; i < count; i++) {
                     if (Math.random() < hitRate) {
                         hits++;
-                        const key = CacheEntrySimulator.randomKeyFromPool();
+                        const key = semanticKey ?? CacheEntrySimulator.randomKeyFromPool();
                         if (sim) sim.recordHit(key);
                         if (writeStrategy === 'write-behind' && cacheModel && cacheModel.checkStaleRead(key, this.tick)) {
                             cacheModel.recordStaleRead(1);
                         }
                     } else {
                         misses++;
-                        if (sim) sim.recordMiss(CacheEntrySimulator.randomKeyFromPool());
+                        const missKey = semanticKey ?? CacheEntrySimulator.randomKeyFromPool();
+                        if (sim) sim.recordMiss(missKey);
                     }
                 }
             } else if (sim) {
                 // Entry-based simulation: sample keys realistically
                 let perKeyStaleReads = 0;
                 for (let i = 0; i < count; i++) {
-                    const key = CacheEntrySimulator.randomKeyFromPool();
+                    const key = semanticKey ?? CacheEntrySimulator.randomKeyFromPool();
                     const forceMiss = cacheModel?.consumeWriteAroundMiss(key);
                     if (forceMiss || isFlushed || !sim.hasKey(key)) {
                         misses++;
@@ -1440,7 +1645,11 @@ export class SimulationRunner {
     ) {
         const sim = this.cacheSimulators.get(node.id);
         const cacheModel = this.cacheModels.get(node.id);
-        const key = (traceId && pp?.path) ? pp.path : (sim ? CacheEntrySimulator.randomKeyFromPool() : '/unknown');
+        const key = (pp?.hasSemanticPath && pp.path)
+            ? pp.path
+            : (traceId && pp?.path)
+                ? pp.path
+                : (sim ? CacheEntrySimulator.randomKeyFromPool() : '/unknown');
 
         switch (writeStrategy) {
             case 'write-through': {
@@ -1673,6 +1882,75 @@ export class SimulationRunner {
             (this.nodeRequestCount.get(particle.targetId) ?? 0) + particle.count,
         );
 
+        // ── Proxy connection pool & queueing (TC-044) ──
+        if (targetNode.type === 'proxy') {
+            const proxySpecific = targetNode.specificConfig as Record<string, unknown>;
+            let poolSize = (proxySpecific.connectionPoolSize as number) ?? 20;
+            const waitTimeoutMs = (proxySpecific.waitTimeoutMs as number) ?? 100;
+            const maxQueueDepth = (proxySpecific.maxQueueDepth as number) ?? 50;
+
+            // Resource exhaustion chaos halves the effective pool
+            const isExhausted = !!targetNode.sharedConfig.chaos?.resourceExhaustion;
+            if (isExhausted) {
+                poolSize = Math.max(1, Math.floor(poolSize / 2));
+            }
+
+            // Effective capacity: poolSize connections × (1000ms / avgLatencyMs) req/s
+            // Each connection handles ~20 req/s at 50ms per query
+            const connectionLatencyMs = 50;
+            const effectiveCapacityRps = poolSize * (1000 / connectionLatencyMs);
+
+            // Current load: use this node's incoming RPS (EMA)
+            const incomingRps = this.nodeRpsEma.get(targetNode.id) ?? 0;
+
+            // Approximate tick duration in ms (aligned with other tickDurationMs usages)
+            const cappedDt = 100 / this.speed;
+
+            if (incomingRps > effectiveCapacityRps) {
+                // Pool exhausted — requests queue
+                const overflow = incomingRps - effectiveCapacityRps;
+                const currentQueue = this.proxyQueueDepth.get(targetNode.id) ?? 0;
+                const newQueue = Math.min(
+                    maxQueueDepth,
+                    currentQueue + overflow * (cappedDt / 1000),
+                );
+                this.proxyQueueDepth.set(targetNode.id, newQueue);
+
+                // Queued requests that exceed waitTimeoutMs -> errors (modeled via queue fill ratio)
+                if (newQueue >= maxQueueDepth * 0.5) {
+                    const errorFraction = Math.min(1, newQueue / maxQueueDepth);
+                    const additionalErrors = Math.floor(
+                        overflow * errorFraction * (cappedDt / 1000),
+                    );
+                    if (additionalErrors > 0) {
+                        this.nodeErrorCount.set(
+                            targetNode.id,
+                            (this.nodeErrorCount.get(targetNode.id) ?? 0) + additionalErrors,
+                        );
+                        this.nodeTickErrors.set(
+                            targetNode.id,
+                            (this.nodeTickErrors.get(targetNode.id) ?? 0) + additionalErrors,
+                        );
+                    }
+                }
+            } else {
+                // Load within capacity — drain queue gradually
+                const currentQueue = this.proxyQueueDepth.get(targetNode.id) ?? 0;
+                const drainRate = (effectiveCapacityRps - incomingRps) * (cappedDt / 1000);
+                this.proxyQueueDepth.set(
+                    targetNode.id,
+                    Math.max(0, currentQueue - drainRate),
+                );
+            }
+
+            // Estimate active connections from current load
+            const estimatedActive = Math.min(
+                poolSize,
+                Math.floor((incomingRps * connectionLatencyMs) / 1000),
+            );
+            this.proxyActiveConnections.set(targetNode.id, estimatedActive);
+        }
+
         // Check if target can handle the load using current RPS vs capacity
         const capacity = this.getNodeCapacity(targetNode);
         const currentLoadRps = this.nodeRpsEma.get(particle.targetId) ?? 0;
@@ -1749,7 +2027,58 @@ export class SimulationRunner {
 
         // Add latency (node processing + protocol overhead + payload + write overhead)
         const protocolOverhead = conn ? (PROTOCOL_FACTORS[conn.protocol]?.overheadMs ?? 0) : 0;
-        let latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
+        let latency: number;
+
+        if (targetNode.type === 'worker') {
+            const workerModel = this.workerModels.get(targetNode.id);
+            const tickDurationMs = 100 / this.speed;
+            const queueDepth = this.getUpstreamMQQueueDepth(targetNode.id);
+            const processingLatency = workerModel?.getProcessingLatencyMs(queueDepth, tickDurationMs) ?? 50;
+            latency = processingLatency + protocolOverhead;
+            if (workerModel) {
+                workerModel.recordTask(processingLatency);
+            }
+        } else if (targetNode.type === 'pub_sub') {
+            const pubSubModel = this.pubSubModels.get(targetNode.id);
+            const publishLatency = pubSubModel?.getPublishLatencyMs() ?? 3;
+            const subscriberCount = pubSubModel?.getSubscriberGroupCount() ?? 1;
+            // Broker adds small fixed latency; fan-out is handled in spawnFromNode.
+            latency = publishLatency + protocolOverhead;
+            if (pubSubModel) {
+                pubSubModel.recordPublish(subscriberCount * particle.count);
+            }
+        } else if (targetNode.type === 'cdc_connector') {
+            const cdcModel = this.cdcModels.get(targetNode.id);
+            latency = (cdcModel?.getCaptureLatencyMs() ?? 200) + protocolOverhead;
+        } else if (targetNode.type === 'dns') {
+            latency = 1 + protocolOverhead; // DNS lookup is fast
+        } else {
+            latency = this.getNodeLatency(targetNode, currentLoadRps, capacity) + protocolOverhead;
+        }
+
+        // Object Store Glacier logic
+        if (targetNode.type === 'object_store') {
+            const scOs = targetNode.specificConfig as Record<string, unknown>;
+            if (scOs.storageClass === 'glacier' && currRw === 'read') {
+                if (!this.glacierWarmedNodes.has(targetNode.id)) {
+                    this.glacierWarmedNodes.add(targetNode.id);
+                    latency += 60000; // 60s cold read penalty in sim scale
+                    if (particle.traceId) {
+                        this.addTraceEvent(particle.traceId, {
+                            nodeId: targetNode.id,
+                            nodeName: targetNode.name,
+                            nodeType: targetNode.type,
+                            action: `Glacier cold read restore penalty (~60s)`,
+                            timestamp: this.tick,
+                            method: particle.method,
+                            readWrite: currRw,
+                            status: 'warning',
+                            parentId: particle.parentTraceEventId,
+                        });
+                    }
+                }
+            }
+        }
 
         // --- DISTRIBUTED TRANSACTIONS: 2PC / Saga Overhead (Task 3) ---
         if (currRw === 'write') {
@@ -1879,6 +2208,23 @@ export class SimulationRunner {
             const dbModel = this.dbModels.get(targetNode.id);
             const tickDurationMs = 100 / this.speed;
 
+            // Workload-aware DB query distribution: prefer archetype.dbLabel when available.
+            if (this.workloadProfile && particle.archetypeId) {
+                const arch = this.workloadProfile.archetypes.find((a) => a.id === particle.archetypeId);
+                const label = arch?.dbLabel ?? arch?.label ?? particle.archetypeLabel;
+                if (label) {
+                    const qMap = this.dbQueryDistribution.get(targetNode.id);
+                    if (qMap) {
+                        qMap.set(label, (qMap.get(label) ?? 0) + particle.count);
+                    }
+                }
+            } else if (particle.archetypeLabel) {
+                const qMap = this.dbQueryDistribution.get(targetNode.id);
+                if (qMap) {
+                    qMap.set(particle.archetypeLabel, (qMap.get(particle.archetypeLabel) ?? 0) + particle.count);
+                }
+            }
+
             if (dbModel) {
                 if (currRw === 'write') {
                     const writeResult = dbModel.routeWrite(this.tick, tickDurationMs);
@@ -1888,6 +2234,29 @@ export class SimulationRunner {
                     if (readResult.staleRead && particle.traceId) {
                         // Pass it via particle so the trace event can reference it
                         (particle as RequestParticle & { _staleRead?: boolean })._staleRead = true;
+                    }
+                }
+            }
+        }
+
+        // CDC: if this DB has a CDC connector attached, schedule a change event after captureLatencyMs
+        if (currRw === 'write' && (targetNode.type === 'database_sql' || targetNode.type === 'database_nosql')) {
+            const outEdges = this.connectionsBySource.get(targetNode.id) ?? [];
+            const tickDurationMs = 100 / this.speed;
+            for (const edge of outEdges) {
+                const downstream = this.nodeMap.get(edge.targetId);
+                if (downstream?.type === 'cdc_connector') {
+                    const cdcModel = this.cdcModels.get(downstream.id);
+                    if (cdcModel) {
+                        const captureLatencyMs = cdcModel.getCaptureLatencyMs();
+                        const delayTicks = Math.ceil(captureLatencyMs / tickDurationMs);
+                        cdcModel.recordCapture(particle.count);
+                        this.scheduledCDCEvents.push({
+                            dueTick: this.tick + delayTicks,
+                            cdcNodeId: downstream.id,
+                            count: particle.count,
+                            readWrite: 'write',
+                        });
                     }
                 }
             }
@@ -1912,6 +2281,18 @@ export class SimulationRunner {
             if (mqModel) {
                 const backpressure = (targetNode.specificConfig as any)?.backpressure ?? 'block';
                 const action = mqModel.applyBackpressure(backpressure);
+
+                // Workload-aware MQ distribution: only archetypes with explicit mqLabel contribute.
+                if (this.workloadProfile && particle.archetypeId) {
+                    const arch = this.workloadProfile.archetypes.find((a) => a.id === particle.archetypeId);
+                    const mqLabel = arch?.mqLabel;
+                    if (mqLabel) {
+                        const qMap = this.mqQueryDistribution.get(targetNode.id);
+                        if (qMap) {
+                            qMap.set(mqLabel, (qMap.get(mqLabel) ?? 0) + particle.count);
+                        }
+                    }
+                }
 
                 if (action === 'drop') {
                     // Record error on the upstream node that sent this particle
@@ -1982,16 +2363,21 @@ export class SimulationRunner {
         parentParticle?: RequestParticle,
         readWriteOverride?: ReadWrite,
         parentTraceEventId?: string,
+        archetypeIdOverride?: string,
+        archetypeLabelOverride?: string,
+        pathOverride?: string,
     ) {
         const id = `p${nextParticleId++}`;
         const rw = readWriteOverride ?? parentParticle?.readWrite;
         let color: string;
         if (traceId) {
-            color = rw === 'write' ? '#f59e0b' : '#eab308';
+            color = rw === 'write' ? '#f59e0b' : rw === 'cdc' ? '#a855f7' : '#eab308';
         } else if (rw === 'write') {
             color = colorOverride ?? '#f97316';
         } else if (rw === 'read') {
             color = colorOverride ?? '#3b82f6';
+        } else if (rw === 'cdc') {
+            color = colorOverride ?? '#a855f7';
         } else {
             color = colorOverride ?? '#22d3ee';
         }
@@ -2008,7 +2394,10 @@ export class SimulationRunner {
             method: parentParticle?.method,
             readWrite: rw,
             payloadSize: parentParticle?.payloadSize,
-            path: parentParticle?.path,
+            path: pathOverride ?? parentParticle?.path,
+            archetypeId: archetypeIdOverride ?? parentParticle?.archetypeId,
+            archetypeLabel: archetypeLabelOverride ?? parentParticle?.archetypeLabel,
+            hasSemanticPath: parentParticle?.hasSemanticPath ?? false,
         });
 
         this.nodeActiveCount.set(
@@ -2040,6 +2429,44 @@ export class SimulationRunner {
         return Math.random() < ratio ? 'read' : 'write';
     }
 
+    private sampleArchetype(node: CanvasNode): {
+        readWrite: ReadWrite;
+        path?: string;
+        archetypeId?: string;
+        archetypeLabel?: string;
+        hasSemanticPath: boolean;
+    } {
+        if (!this.workloadProfile || this.workloadProfile.archetypes.length === 0) {
+            return { readWrite: this.sampleReadWrite(node), hasSemanticPath: false };
+        }
+
+        const r = Math.random();
+        let cumulative = 0;
+        let selected: RequestArchetype = this.workloadProfile.archetypes[this.workloadProfile.archetypes.length - 1];
+
+        for (const arch of this.workloadProfile.archetypes) {
+            cumulative += arch.weight;
+            if (r <= cumulative) {
+                selected = arch;
+                break;
+            }
+        }
+
+        let path: string | undefined = undefined;
+        if (selected.cacheKeyPattern && selected.sampleIds.length > 0) {
+            const id = selected.sampleIds[Math.floor(Math.random() * selected.sampleIds.length)];
+            path = selected.cacheKeyPattern.replace('{id}', id).replace('{code}', id);
+        }
+
+        return {
+            readWrite: selected.method,
+            path,
+            archetypeId: selected.id,
+            archetypeLabel: selected.label,
+            hasSemanticPath: !!path,
+        };
+    }
+
     /** Cache topology: edge (CDN→Cache), backend (App→Cache→DB), blob (App→Cache→Object Store), l2 (Cache→Cache). */
     private getCachePlacement(nodeId: string): 'edge' | 'backend' | 'blob' | 'l2' {
         // Order is intentional: edge and blob take precedence over l2.
@@ -2053,6 +2480,20 @@ export class SimulationRunner {
         if (downstreamTypes.has('object_store')) return 'blob';
         if (upstreamTypes.has('cache')) return 'l2';
         return 'backend';
+    }
+
+    private getUpstreamMQQueueDepth(nodeId: string): number {
+        const inbound = this.connectionsByTarget.get(nodeId) ?? [];
+        for (const conn of inbound) {
+            const sourceNode = this.nodeMap.get(conn.sourceId);
+            if (sourceNode?.type === 'message_queue') {
+                const mqModel = this.mqModels.get(sourceNode.id);
+                if (mqModel) {
+                    return mqModel.getQueueDepth();
+                }
+            }
+        }
+        return 0;
     }
 
     private getCacheHitRate(node: CanvasNode): number {
@@ -2126,7 +2567,7 @@ export class SimulationRunner {
     }
 
     private isLeafNode(type: CanvasComponentType): boolean {
-        return ['database_sql', 'database_nosql', 'object_store', 'message_queue'].includes(type);
+        return ['database_sql', 'database_nosql', 'object_store', 'message_queue', 'cdc_connector'].includes(type);
     }
 
     private findUpstreamAppServer(nodeId: string): CanvasNode | undefined {
@@ -2343,6 +2784,13 @@ export class SimulationRunner {
                     }
                     const sentMap = this.proxySentRequests.get(node.id);
 
+                    const queueDepth = this.proxyQueueDepth.get(node.id) ?? 0;
+                    const activeConnections = this.proxyActiveConnections.get(node.id) ?? 0;
+                    const proxySpecific = node.specificConfig as Record<string, unknown>;
+                    const poolSize = (proxySpecific.connectionPoolSize as number) ?? 20;
+                    const isExhausted = !!node.sharedConfig.chaos?.resourceExhaustion;
+                    const effectivePool = isExhausted ? Math.max(1, Math.floor(poolSize / 2)) : poolSize;
+
                     const backends = (this.adjacency.get(node.id) ?? []).map((targetId) => {
                         const targetNode = this.nodeMap.get(targetId);
 
@@ -2381,13 +2829,100 @@ export class SimulationRunner {
                             activeConnections: this.nodeActiveCount.get(targetId) ?? 0,
                         };
                     });
+
+                    detail.queueDepth = Math.round(queueDepth);
+                    detail.activeConnections = activeConnections;
+                    detail.effectivePoolSize = effectivePool;
+                    detail.poolSize = poolSize;
+
+                    const diagnostics: string[] = detail.diagnostics ?? [];
+                    if (isExhausted) {
+                        diagnostics.push(
+                            `Resource exhaustion: connection pool halved (${effectivePool}/${poolSize} connections). ` +
+                            `Effective capacity reduced — requests queuing (DDIA Ch.1 §Connection Pooling)`,
+                        );
+                    }
+                    if (queueDepth > 0) {
+                        diagnostics.push(
+                            `Queue depth: ${Math.round(queueDepth)} requests waiting. ` +
+                            `Pool exhaustion causes latency spikes and timeout errors`,
+                        );
+                    }
+                    if (diagnostics.length > 0) {
+                        detail.diagnostics = diagnostics;
+                    }
+
                     detail.componentDetail = {
                         kind: 'proxy',
                         algorithm: (c.algorithm as string) ?? 'round-robin',
                         connectionPooling: (c.connectionPooling as boolean) ?? true,
                         maxConnections: (c.maxConnections as number) ?? 500,
                         backends,
+                        queueDepth: Math.round(queueDepth),
+                        activeConnections,
+                        effectivePoolSize: effectivePool,
+                        poolSize,
                     };
+                    break;
+                }
+                case 'dns': {
+                    const c = node.specificConfig as Record<string, unknown>;
+                    const healthCheckConfig = (c.healthCheck as any) ?? node.sharedConfig.resilience?.healthCheck;
+                    const outConns = this.connectionsBySource.get(node.id) ?? [];
+                    const diagnostics: string[] = detail.diagnostics ?? [];
+
+                    const dnsModel = this.dnsModels.get(node.id);
+
+                    if (dnsModel) {
+                        for (const conn of outConns) {
+                            const errsTarget = this.nodeErrorCount.get(conn.targetId) ?? 0;
+                            const reqsTarget = this.nodeRequestCount.get(conn.targetId) ?? 0;
+                            const errRateTarget = reqsTarget > 0 ? errsTarget / reqsTarget : 0;
+                            const targetNode = this.nodeMap.get(conn.targetId);
+
+                            dnsModel.recordHealthCheck(
+                                conn.targetId,
+                                errRateTarget,
+                                this.tick,
+                                healthCheckConfig,
+                                100 / this.speed,
+                                !!targetNode?.sharedConfig.chaos?.nodeFailure
+                            );
+
+                            if (dnsModel.isInFailoverWindow(conn.targetId)) {
+                                diagnostics.push(`Propagating failover... traffic still going to failed node ${targetNode?.name}`);
+                            } else if (dnsModel.isRemoved(conn.targetId)) {
+                                diagnostics.push(`Node ${targetNode?.name} removed from DNS resolution`);
+                            }
+                        }
+                    }
+
+                    if (diagnostics.length > 0) detail.diagnostics = diagnostics;
+
+                    detail.componentDetail = {
+                        kind: 'dns',
+                        recordType: (c.recordType as string) ?? 'A',
+                        routingPolicy: (c.routingPolicy as string) ?? 'simple',
+                    };
+                    break;
+                }
+                case 'object_store': {
+                    const scOs = node.specificConfig as Record<string, unknown>;
+                    detail.componentDetail = {
+                        kind: 'object_store',
+                        storageClass: (scOs.storageClass as string) ?? 'standard',
+                        versioning: (scOs.versioning as boolean) ?? false,
+                        lifecycleRules: (scOs.lifecycleRules as boolean) ?? false,
+                    };
+                    const diagnostics: string[] = detail.diagnostics ?? [];
+                    if (scOs.storageClass === 'glacier') {
+                        if (!this.glacierWarmedNodes.has(node.id)) {
+                            diagnostics.push('Glacier storage: First read will incur a massive restore latency penalty (~60s).');
+                        } else {
+                            diagnostics.push('Glacier storage: Warmed up after cold read.');
+                        }
+                    }
+                    if (diagnostics.length > 0) detail.diagnostics = diagnostics;
                     break;
                 }
                 case 'app_server': {
@@ -2426,9 +2961,12 @@ export class SimulationRunner {
                 case 'database_sql': {
                     const cap = this.getNodeCapacity(node);
                     const dbModel = this.dbModels.get(node.id);
+                    const instancesSql = node.sharedConfig?.scaling?.instances ?? 1;
                     if (dbModel) {
                         const lagMs = dbModel.getReplicationLagMs();
-                        detail.replicationLagMs = lagMs;
+                        if (instancesSql > 1) {
+                            detail.replicationLagMs = lagMs;
+                        }
                         detail.staleReadCount = dbModel.getStaleReadCount();
 
                         const diagnostics: string[] = detail.diagnostics ?? [];
@@ -2437,7 +2975,7 @@ export class SimulationRunner {
                             diagnostics.push(
                                 `Async replication: committed writes may be lost if the leader crashes before replicas catch up`
                             );
-                            if (dbModel.getStaleReadCount() > 0) {
+                            if (instancesSql > 1 && dbModel.getStaleReadCount() > 0) {
                                 diagnostics.push(
                                     `Reads-your-writes not guaranteed: replica lag ~${dbModel.replicationLagMs}ms`
                                 );
@@ -2445,7 +2983,7 @@ export class SimulationRunner {
                         }
 
                         // TC-042 — data loss warning after async failover
-                        if (node.sharedConfig.chaos?.nodeFailure &&
+                        if (instancesSql > 1 && node.sharedConfig.chaos?.nodeFailure &&
                             dbModel.replicationMode === 'single-leader' &&
                             dbModel.syncMode === 'asynchronous') {
                             diagnostics.push(
@@ -2522,6 +3060,11 @@ export class SimulationRunner {
                         if (diagnostics.length > 0) detail.diagnostics = diagnostics;
                     }
 
+                    const queryMapSql = this.dbQueryDistribution.get(node.id);
+                    const queryDistributionSql = queryMapSql
+                        ? Array.from(queryMapSql.entries()).map(([query, count]) => ({ query, count })).sort((a, b) => b.count - a.count)
+                        : undefined;
+
                     detail.componentDetail = {
                         kind: 'database_sql',
                         engine: (c.engine as string) ?? 'postgresql',
@@ -2530,9 +3073,11 @@ export class SimulationRunner {
                         readReplicas: (c.readReplicas as number) ?? 0,
                         connectionPooling: (c.connectionPooling as boolean) ?? true,
                         activeConnections: this.nodeActiveCount.get(node.id) ?? 0,
-                        replicationLagMs: detail.replicationLagMs,
+                        instances: instancesSql,
+                        ...(instancesSql > 1 && detail.replicationLagMs != null && { replicationLagMs: detail.replicationLagMs }),
                         isCompacting: dbModel?.isCompacting() ?? false,
                         nextCompactionInSeconds: dbModel?.getNextCompactionInSeconds(this.tick, 100 / this.speed) ?? 0,
+                        ...(queryDistributionSql && { queryDistribution: queryDistributionSql }),
                         ...(detail.shardCount != null && { shardCount: detail.shardCount }),
                         ...(detail.isHotShard && { isHotShard: true, hotshardLatencyMultiplier: detail.hotshardLatencyMultiplier }),
                     };
@@ -2541,9 +3086,12 @@ export class SimulationRunner {
                 case 'database_nosql': {
                     const cap = this.getNodeCapacity(node);
                     const dbModel = this.dbModels.get(node.id);
+                    const instancesNoSql = node.sharedConfig?.scaling?.instances ?? 1;
                     if (dbModel) {
                         const lagMs = dbModel.getReplicationLagMs();
-                        detail.replicationLagMs = lagMs;
+                        if (instancesNoSql > 1) {
+                            detail.replicationLagMs = lagMs;
+                        }
                         detail.staleReadCount = dbModel.getStaleReadCount();
 
                         const diagnostics: string[] = detail.diagnostics ?? [];
@@ -2552,7 +3100,7 @@ export class SimulationRunner {
                             diagnostics.push(
                                 `Async replication: committed writes may be lost if the leader crashes before replicas catch up`
                             );
-                            if (dbModel.getStaleReadCount() > 0) {
+                            if (instancesNoSql > 1 && dbModel.getStaleReadCount() > 0) {
                                 diagnostics.push(
                                     `Reads-your-writes not guaranteed: replica lag ~${dbModel.replicationLagMs}ms`
                                 );
@@ -2560,7 +3108,7 @@ export class SimulationRunner {
                         }
 
                         // TC-042 — data loss warning after async failover
-                        if (node.sharedConfig.chaos?.nodeFailure &&
+                        if (instancesNoSql > 1 && node.sharedConfig.chaos?.nodeFailure &&
                             dbModel.replicationMode === 'single-leader' &&
                             dbModel.syncMode === 'asynchronous') {
                             diagnostics.push(
@@ -2664,15 +3212,22 @@ export class SimulationRunner {
                         if (diagnostics.length > 0) detail.diagnostics = diagnostics;
                     }
 
+                    const queryMapNoSql = this.dbQueryDistribution.get(node.id);
+                    const queryDistributionNoSql = queryMapNoSql
+                        ? Array.from(queryMapNoSql.entries()).map(([query, count]) => ({ query, count })).sort((a, b) => b.count - a.count)
+                        : undefined;
+
                     detail.componentDetail = {
                         kind: 'database_nosql',
                         engine: (c.engine as string) ?? 'dynamodb',
                         consistencyLevel: (c.consistencyLevel as string) ?? 'eventual',
                         capacity: cap,
                         utilization,
-                        replicationLagMs: detail.replicationLagMs,
+                        instances: instancesNoSql,
+                        ...(instancesNoSql > 1 && detail.replicationLagMs != null && { replicationLagMs: detail.replicationLagMs }),
                         isCompacting: dbModel?.isCompacting() ?? false,
                         nextCompactionInSeconds: dbModel?.getNextCompactionInSeconds(this.tick, 100 / this.speed) ?? 0,
+                        ...(queryDistributionNoSql && { queryDistribution: queryDistributionNoSql }),
                         ...(detail.quorumSummary != null && { quorumConditionMet: detail.quorumConditionMet, quorumSummary: detail.quorumSummary }),
                         ...(detail.shardCount != null && { shardCount: detail.shardCount }),
                         ...(detail.isHotShard && { isHotShard: true, hotshardLatencyMultiplier: detail.hotshardLatencyMultiplier }),
@@ -2735,6 +3290,11 @@ export class SimulationRunner {
                         );
                     }
 
+                    const queryMapMq = this.mqQueryDistribution.get(node.id);
+                    const queryDistributionMq = queryMapMq
+                        ? Array.from(queryMapMq.entries()).map(([query, count]) => ({ query, count })).sort((a, b) => b.count - a.count)
+                        : undefined;
+
                     detail.componentDetail = {
                         kind: 'message_queue',
                         partitions: sc.scaling?.instances ?? 1,
@@ -2745,6 +3305,130 @@ export class SimulationRunner {
                         deadLettered: 0,
                         droppedMessages: mqModel?.droppedMessages ?? 0,
                         deliveryGuarantee: mqGuarantee,
+                        ...(queryDistributionMq && { queryDistribution: queryDistributionMq }),
+                    };
+                    break;
+                }
+                case 'pub_sub': {
+                    const pubSubModel = this.pubSubModels.get(node.id);
+                    const subs = (c.subscriberGroupCount as number) ?? 2;
+                    const subscriberGroupCount = Math.max(1, subs);
+                    const incomingRps = this.nodeRpsEma.get(node.id) ?? 0;
+                    const fanOutRps = Math.round(incomingRps * subscriberGroupCount);
+                    const orderingEnabled = (c.orderingEnabled as boolean) ?? false;
+
+                    const diagnostics: string[] = detail.diagnostics ?? [];
+
+                    if (orderingEnabled) {
+                        diagnostics.push(
+                            'Ordering enabled: throughput reduced ~50% (sequential per-key delivery). Disable if not required (DDIA Ch.11 §Ordering).',
+                        );
+                    }
+
+                    if (subscriberGroupCount >= 5 && incomingRps > 0) {
+                        diagnostics.push(
+                            `High fan-out: ${subscriberGroupCount} subscriber groups × ${Math.round(incomingRps)} RPS ≈ ${fanOutRps} total downstream RPS. Ensure consumers can handle multiplied load (DDIA Ch.11).`,
+                        );
+                    }
+
+                    if (diagnostics.length > 0) {
+                        detail.diagnostics = diagnostics;
+                    }
+
+                    detail.componentDetail = {
+                        kind: 'pub_sub',
+                        engine: (c.engine as string) ?? 'kafka',
+                        subscriberGroupCount,
+                        messagesPublished: pubSubModel?.messagesPublished ?? 0,
+                        totalFanOutDeliveries: pubSubModel?.totalFanOutDeliveries ?? 0,
+                        fanOutRps,
+                        orderingEnabled,
+                    };
+                    break;
+                }
+                case 'cdc_connector': {
+                    const cdcModel = this.cdcModels.get(node.id);
+                    const captureMode = (c.captureMode as string) ?? 'log-tail';
+                    const captureLatencyMs = (c.captureLatencyMs as number) ?? 200;
+                    const includeDeletes = (c.includeDeletes as boolean) ?? true;
+
+                    const diagnostics: string[] = [];
+
+                    diagnostics.push(
+                        `CDC pipeline active: downstream is eventually consistent with source DB. ` +
+                        `Propagation delay ≥ ${captureLatencyMs}ms (DDIA Ch.11 §Change Data Capture)`,
+                    );
+
+                    if (captureMode === 'timestamp-polling' && includeDeletes) {
+                        diagnostics.push(
+                            `timestamp-polling mode does not capture DELETE events — ` +
+                            `deletes will be missed in derived store (DDIA Ch.11)`,
+                        );
+                    }
+
+                    if (captureMode === 'trigger-based') {
+                        diagnostics.push(
+                            `trigger-based capture adds ~10% write latency to source DB ` +
+                            `on every INSERT/UPDATE/DELETE (DDIA Ch.11)`,
+                        );
+                    }
+
+                    if (diagnostics.length > 0) {
+                        detail.diagnostics = diagnostics;
+                    }
+
+                    detail.componentDetail = {
+                        kind: 'cdc_connector',
+                        captureMode,
+                        captureLatencyMs,
+                        changeEventsCaptured: cdcModel?.changeEventsCaptured ?? 0,
+                        changeEventsEmitted: cdcModel?.changeEventsEmitted ?? 0,
+                        includeDeletes,
+                    };
+                    break;
+                }
+                case 'worker': {
+                    const workerModel = this.workerModels.get(node.id);
+                    const incomingRps = this.nodeRpsEma.get(node.id) ?? 0;
+                    const mqQueueDepth = this.getUpstreamMQQueueDepth(node.id);
+                    const throughput = workerModel?.getEffectiveThroughput() ?? 0;
+                    const utilizationPct = workerModel?.getUtilizationPct(incomingRps) ?? 0;
+                    const activeWorkers = workerModel?.getActiveWorkers(incomingRps) ?? 0;
+                    const avgLatency = workerModel?.getAverageProcessingLatencyMs() ?? 0;
+                    const isSaturated = workerModel?.isSaturated(incomingRps) ?? false;
+                    const processingTimeMs = (c.processingTimeMs as number) ?? 50;
+                    const jobType = (c.jobType as string) ?? 'io-bound';
+
+                    const diagnostics: string[] = detail.diagnostics ?? [];
+
+                    if (isSaturated) {
+                        diagnostics.push(
+                            `Worker saturated: processing ~${Math.round(incomingRps)} tasks/s but capacity is ~${Math.round(throughput)} tasks/s. ` +
+                            `Increase replicas or reduce processingTimeMs to drain the queue faster (DDIA Ch.11: Consumer Lag).`,
+                        );
+                    }
+
+                    if (mqQueueDepth > 0) {
+                        diagnostics.push(
+                            `Consumer lag building: MQ queue depth ≈ ${Math.round(mqQueueDepth)} tasks. ` +
+                            `Producer is outpacing Worker throughput.`,
+                        );
+                    }
+
+                    if (diagnostics.length > 0) {
+                        detail.diagnostics = diagnostics;
+                    }
+
+                    detail.componentDetail = {
+                        kind: 'worker',
+                        tasksProcessed: workerModel?.tasksProcessed ?? 0,
+                        throughputRps: Math.round(throughput),
+                        utilizationPct: Math.round(utilizationPct * 100),
+                        activeWorkers,
+                        avgProcessingLatencyMs: Math.round(avgLatency),
+                        isSaturated,
+                        jobType,
+                        processingTimeMs,
                     };
                     break;
                 }
@@ -2773,10 +3457,16 @@ export class SimulationRunner {
                     break;
                 }
                 case 'client': {
+                    const clientArchetypes = this.workloadProfile?.archetypes.map((a: RequestArchetype) => ({
+                        id: a.id,
+                        label: a.label,
+                        weight: a.weight,
+                    }));
                     detail.componentDetail = {
                         kind: 'client',
                         requestsPerSecond: this.getClientRps(node),
                         readWriteRatio: this.getClientReadWriteRatio(node),
+                        ...(clientArchetypes && clientArchetypes.length > 0 && { archetypes: clientArchetypes }),
                     };
                     break;
                 }

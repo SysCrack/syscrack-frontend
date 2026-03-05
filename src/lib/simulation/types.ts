@@ -82,14 +82,53 @@ export type ComponentDetailData =
     | { kind: 'cache'; hitRate: number; hits: number; misses: number; entries: CacheEntry[]; evictionPolicy: string; readStrategy: string; writeStrategy: string; ttl: number; maxEntries: number; placement?: CachePlacement; staleReadCount?: number }
     | { kind: 'cdn'; hitRate: number; hits: number; misses: number; edgeLocations: number; ttl: number }
     | { kind: 'load_balancer'; algorithm: string; backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[] }
-    | { kind: 'proxy'; algorithm: string; connectionPooling: boolean; maxConnections: number; backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[] }
+    | {
+        kind: 'proxy';
+        algorithm: string;
+        connectionPooling: boolean;
+        maxConnections: number;
+        backends: { nodeId: string; name: string; sentRequests: number; activeConnections: number }[];
+        queueDepth?: number;
+        activeConnections?: number;
+        effectivePoolSize?: number;
+        poolSize?: number;
+    }
     | { kind: 'app_server'; activeInstances: number; maxInstances: number; autoScaling: boolean; instanceType: string; distributedTransaction?: string; sagaCompensation?: string }
-    | { kind: 'database_sql'; engine: string; readCapacity: number; writeCapacity: number; readReplicas: number; connectionPooling: boolean; activeConnections: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number }
-    | { kind: 'database_nosql'; engine: string; consistencyLevel: string; capacity: number; utilization: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; quorumConditionMet?: boolean; quorumSummary?: string; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number }
-    | { kind: 'message_queue'; partitions: number; isFifo: boolean; queueDepth: number; enqueued: number; processed: number; deadLettered: number; droppedMessages?: number; deliveryGuarantee?: string }
-    | { kind: 'object_store'; storageClass: string; capacity: number; utilization: number }
+    | { kind: 'database_sql'; engine: string; readCapacity: number; writeCapacity: number; readReplicas: number; connectionPooling: boolean; activeConnections: number; instances?: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number; queryDistribution?: { query: string; count: number }[] }
+    | { kind: 'database_nosql'; engine: string; consistencyLevel: string; capacity: number; utilization: number; instances?: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; quorumConditionMet?: boolean; quorumSummary?: string; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number; queryDistribution?: { query: string; count: number }[] }
+    | { kind: 'message_queue'; partitions: number; isFifo: boolean; queueDepth: number; enqueued: number; processed: number; deadLettered: number; droppedMessages?: number; deliveryGuarantee?: string; queryDistribution?: { query: string; count: number }[] }
+    | { kind: 'object_store'; storageClass: string; versioning?: boolean; lifecycleRules?: boolean; capacity?: number; utilization?: number }
+    | { kind: 'dns'; recordType: string; routingPolicy: string }
     | { kind: 'api_gateway'; authEnabled: boolean; rateLimiting: boolean; rateLimit: number; allowed: number; dropped: number }
-    | { kind: 'client'; requestsPerSecond: number; readWriteRatio?: number };
+    | { kind: 'client'; requestsPerSecond: number; readWriteRatio?: number; archetypes?: { id: string; label: string; weight: number }[] }
+    | {
+        kind: 'worker';
+        tasksProcessed: number;
+        throughputRps: number;
+        utilizationPct: number;
+        activeWorkers: number;
+        avgProcessingLatencyMs: number;
+        isSaturated: boolean;
+        jobType: string;
+        processingTimeMs: number;
+    }
+    | {
+        kind: 'pub_sub';
+        engine: string;
+        subscriberGroupCount: number;
+        messagesPublished: number;
+        totalFanOutDeliveries: number;
+        fanOutRps: number;
+        orderingEnabled: boolean;
+    }
+    | {
+        kind: 'cdc_connector';
+        captureMode: string;
+        captureLatencyMs: number;
+        changeEventsCaptured: number;
+        changeEventsEmitted: number;
+        includeDeletes: boolean;
+    };
 
 export interface NodeDetailMetrics extends NodeSimSummary {
     currentRps: number;
@@ -101,6 +140,9 @@ export interface NodeDetailMetrics extends NodeSimSummary {
     hits?: number;
     misses?: number;
     queueDepth?: number;
+    activeConnections?: number;
+    effectivePoolSize?: number;
+    poolSize?: number;
     replicationLagMs?: number;
     staleReadCount?: number;
     writeErrorRate?: number;
@@ -136,7 +178,7 @@ export interface SimulationOutput {
 // ── Request method / read-write types ──
 
 export type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
-export type ReadWrite = 'read' | 'write';
+export type ReadWrite = 'read' | 'write' | 'cdc';
 export type PayloadSize = 'tiny' | 'small' | 'medium' | 'large';
 
 export function methodToReadWrite(method?: RequestMethod): ReadWrite {

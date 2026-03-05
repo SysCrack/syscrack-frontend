@@ -12,3 +12,6 @@ export { DatabaseSQLModel } from './DatabaseSQLModel';
 export { DatabaseNoSQLModel } from './DatabaseNoSQLModel';
 export { ObjectStoreModel } from './ObjectStoreModel';
 export { MessageQueueModel } from './MessageQueueModel';
+export { WorkerModel } from './WorkerModel';
+export { PubSubModel } from './PubSubModel';
+export { CDCModel } from './CDCModel';

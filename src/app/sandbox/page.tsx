@@ -11,7 +11,7 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import ConfigSidebar from '@/components/system-canvas/ConfigSidebar';
@@ -23,6 +23,9 @@ import SimulationResults from '@/components/system-canvas/SimulationResults';
 import { TopNav } from '@/components/layout/TopNav';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useCanvasSimulationStore } from '@/stores/canvasSimulationStore';
+import TemplatePicker from '@/components/templates/TemplatePicker';
+import RationaleBanner from '@/components/templates/RationaleBanner';
+import { getTemplateById } from '@/lib/templates';
 
 // Only Konva components need dynamic import (they access `window`)
 const SystemCanvas = dynamic(
@@ -156,46 +159,125 @@ function RightPanel({
 export default function SandboxPage() {
     const [paletteCollapsed, setPaletteCollapsed] = useState(false);
     const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+    const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+    const activeTemplateId = useCanvasStore((s) => s.activeTemplateId);
+    const templateBannerDismissed = useCanvasStore((s) => s.templateBannerDismissed);
+    const activeTemplate = activeTemplateId ? getTemplateById(activeTemplateId) : null;
+    const showRationaleBanner = activeTemplate != null && !templateBannerDismissed;
+
+    // Restore on mount
+    useEffect(() => {
+        useCanvasStore.getState().loadFromLocalStorage();
+    }, []);
+
+    // Auto-save indicator state
+    const [lastSavedLabel, setLastSavedLabel] = useState<string>('');
+    useEffect(() => {
+        function update() {
+            try {
+                const raw = localStorage.getItem('syscrack-canvas-autosave');
+                if (!raw) return;
+                const { savedAt } = JSON.parse(raw);
+                const mins = Math.round((Date.now() - new Date(savedAt).getTime()) / 60000);
+                setLastSavedLabel(mins < 1 ? 'Saved just now' : `Saved ${mins}m ago`);
+            } catch { /* ignore */ }
+        }
+        update();
+        const id = setInterval(update, 30000);
+        return () => clearInterval(id);
+    }, []);
+
     return (
         <div className="min-h-screen flex flex-col bg-[var(--color-canvas-bg)]">
             <TopNav />
-            <main className="flex-1 flex overflow-hidden">
-                {/* Left — Component Palette */}
-                <div style={{ flexShrink: 0 }}>
-                    <ComponentPalette
-                        collapsed={paletteCollapsed}
-                        onToggle={() => setPaletteCollapsed((v) => !v)}
+            <main className="flex-1 flex flex-col overflow-hidden">
+                {/* Rationale banner (between toolbar and canvas) */}
+                {showRationaleBanner && activeTemplate && (
+                    <RationaleBanner
+                        template={activeTemplate}
+                        onDismiss={() => useCanvasStore.setState({ templateBannerDismissed: true })}
+                        onClearTemplate={() => useCanvasStore.getState().clearTemplate()}
+                    />
+                )}
+
+                <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                    {/* Left — Component Palette */}
+                    <div style={{ flexShrink: 0 }}>
+                        <ComponentPalette
+                            collapsed={paletteCollapsed}
+                            onToggle={() => setPaletteCollapsed((v) => !v)}
+                        />
+                    </div>
+
+                    {/* Center — Canvas */}
+                    <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
+                        <SystemCanvas />
+
+                        {/* Top-left: title + delete when selection */}
+                        <SandboxTitleBar />
+
+                        {/* Templates + save indicator (below title bar) */}
+                        <div
+                            onDragOver={handleOverlayDragOver}
+                            onDrop={handleOverlayDrop}
+                            style={{
+                                position: 'absolute',
+                                top: 56,
+                                left: 12,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                pointerEvents: 'auto',
+                            }}
+                        >
+                            <button
+                                onClick={() => setShowTemplatePicker(true)}
+                                style={{
+                                    padding: '5px 12px',
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    color: '#bfdbfe',
+                                    background: 'rgba(59, 130, 246, 0.12)',
+                                    border: '1px solid rgba(59, 130, 246, 0.4)',
+                                    borderRadius: 6,
+                                    cursor: 'pointer',
+                                    backdropFilter: 'blur(8px)',
+                                }}
+                            >
+                                📋 Templates
+                            </button>
+                            {lastSavedLabel && (
+                                <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'Inter, system-ui, sans-serif' }}>
+                                    {lastSavedLabel}
+                                </span>
+                            )}
+                        </div>
+
+                        {/* Top-right: simulation controls + metrics */}
+                        <div
+                            onDragOver={handleOverlayDragOver}
+                            onDrop={handleOverlayDrop}
+                            style={{
+                                position: 'absolute',
+                                top: 12,
+                                right: 12,
+                                pointerEvents: 'auto',
+                            }}
+                        >
+                            <SimulationControls />
+                        </div>
+                    </div>
+
+                    {/* Right — Config or Results panel */}
+                    <RightPanel
+                        collapsed={rightPanelCollapsed}
+                        onToggle={() => setRightPanelCollapsed((v) => !v)}
                     />
                 </div>
-
-                {/* Center — Canvas */}
-                <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
-                    <SystemCanvas />
-
-                    {/* Top-left: title + delete when selection */}
-                    <SandboxTitleBar />
-
-                    {/* Top-right: simulation controls + metrics */}
-                    <div
-                        onDragOver={handleOverlayDragOver}
-                        onDrop={handleOverlayDrop}
-                        style={{
-                            position: 'absolute',
-                            top: 12,
-                            right: 12,
-                            pointerEvents: 'auto',
-                        }}
-                    >
-                        <SimulationControls />
-                    </div>
-                </div>
-
-                {/* Right — Config or Results panel */}
-                <RightPanel
-                    collapsed={rightPanelCollapsed}
-                    onToggle={() => setRightPanelCollapsed((v) => !v)}
-                />
             </main>
+
+            {/* Template Picker modal */}
+            <TemplatePicker open={showTemplatePicker} onClose={() => setShowTemplatePicker(false)} />
         </div>
     );
 }
