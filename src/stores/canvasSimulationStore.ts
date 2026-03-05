@@ -10,6 +10,7 @@ import { SimulationEngine } from '@/lib/simulation/SimulationEngine';
 import type { RequestParticle, LiveMetrics } from '@/lib/simulation/SimulationRunner';
 import type { WorkerTickMessage } from '@/lib/simulation/simulation.worker';
 import { useCanvasStore } from './canvasStore';
+import { getTemplateById } from '../lib/templates';
 
 export type CanvasSimStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error';
 
@@ -88,6 +89,9 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
 
         const speed = get().speed;
         const loadFactor = get().loadFactor;
+        const activeTemplateId = useCanvasStore.getState().activeTemplateId;
+        const template = activeTemplateId ? getTemplateById(activeTemplateId) : undefined;
+        const workloadProfile = template?.workloadProfile;
 
         let worker: Worker;
         try {
@@ -112,7 +116,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             }
         };
 
-        worker.postMessage({ type: 'init', nodes, connections, speed, loadFactor });
+        worker.postMessage({ type: 'init', nodes, connections, speed, loadFactor, workloadProfile });
         worker.postMessage({ type: 'start' });
 
         set({
@@ -143,6 +147,9 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
 
         const speed = get().speed;
         const loadFactor = get().loadFactor;
+        const activeTemplateId = useCanvasStore.getState().activeTemplateId;
+        const template = activeTemplateId ? getTemplateById(activeTemplateId) : undefined;
+        const workloadProfile = template?.workloadProfile;
 
         let worker: Worker;
         try {
@@ -166,7 +173,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             // injectSequentialDone: no-op — stay in paused/debug mode
         };
 
-        worker.postMessage({ type: 'init', nodes, connections, speed, loadFactor });
+        worker.postMessage({ type: 'init', nodes, connections, speed, loadFactor, workloadProfile });
 
         set({
             status: 'paused',

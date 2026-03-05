@@ -8,6 +8,7 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { useNodeDetailMetrics } from '@/stores/canvasSimulationStore';
 import { getCatalogEntry } from '@/lib/data/componentCatalog';
 import type { ComponentDetailData } from '@/lib/simulation/types';
+import { getTemplateById } from '@/lib/templates';
 
 const font = 'Inter, system-ui, sans-serif';
 const panelWidth = 280;
@@ -216,7 +217,7 @@ function DatabaseSQLDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'dat
             </Section>
             <Section title="Live">
                 <Row label="Active connections" value={d.activeConnections} />
-                {d.replicationLagMs !== undefined && <Row label="Replication lag" value={`${Math.round(d.replicationLagMs)}ms`} />}
+                {d.instances != null && d.instances > 1 && d.replicationLagMs != null && <Row label="Replication lag" value={`${Math.round(d.replicationLagMs)}ms`} />}
                 {d.staleReadCount !== undefined && d.staleReadCount > 0 && (
                     <div style={{ marginTop: 8, padding: '4px 8px', background: 'rgba(234, 179, 8, 0.1)', color: '#eab308', borderRadius: 4, fontSize: 11, fontWeight: 500, borderLeft: '3px solid #eab308' }}>
                         Warning: {d.staleReadCount} stale reads detected
@@ -239,6 +240,16 @@ function DatabaseSQLDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'dat
                     </div>
                 )}
             </Section>
+            {d.queryDistribution && d.queryDistribution.length > 0 && (
+                <Section title="Workload (Live)">
+                    {d.queryDistribution.map((qd, idx) => (
+                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, padding: '2px 0' }}>
+                            <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>{qd.query}</span>
+                            <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>{qd.count.toLocaleString()}</span>
+                        </div>
+                    ))}
+                </Section>
+            )}
         </>
     );
 }
@@ -250,7 +261,7 @@ function DatabaseNoSQLDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'd
             <Row label="Consistency" value={d.consistencyLevel} />
             <Row label="Capacity" value={d.capacity} />
             <Row label="Utilization" value={`${(d.utilization * 100).toFixed(1)}%`} />
-            {d.replicationLagMs !== undefined && <Row label="Replication lag" value={`${Math.round(d.replicationLagMs)}ms`} />}
+            {d.instances != null && d.instances > 1 && d.replicationLagMs != null && <Row label="Replication lag" value={`${Math.round(d.replicationLagMs)}ms`} />}
             {d.quorumSummary != null && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, marginTop: 4 }}>
                     <span style={{ color: '#94a3b8' }}>Quorum</span>
@@ -279,6 +290,17 @@ function DatabaseNoSQLDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'd
             )}
             {!d.isCompacting && d.nextCompactionInSeconds != null && d.nextCompactionInSeconds > 0 && (
                 <Row label="Next compaction" value={`in ${d.nextCompactionInSeconds}s`} />
+            )}
+            {d.queryDistribution && d.queryDistribution.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: 6, letterSpacing: '0.05em' }}>Workload (Live)</div>
+                    {d.queryDistribution.map((qd, idx) => (
+                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, padding: '2px 0' }}>
+                            <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>{qd.query}</span>
+                            <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>{qd.count.toLocaleString()}</span>
+                        </div>
+                    ))}
+                </div>
             )}
         </Section>
     );
@@ -317,6 +339,16 @@ function MessageQueueDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'me
                     </div>
                 )}
             </Section>
+            {d.queryDistribution && d.queryDistribution.length > 0 && (
+                <Section title="Workload (Live)">
+                    {d.queryDistribution.map((qd, idx) => (
+                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, padding: '2px 0' }}>
+                            <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>{qd.query}</span>
+                            <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>{qd.count.toLocaleString()}</span>
+                        </div>
+                    ))}
+                </Section>
+            )}
         </>
     );
 }
@@ -350,10 +382,27 @@ function APIGatewayDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'api_
 function ClientDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'client' }> }) {
     const readPct = Math.round((d.readWriteRatio ?? 0.8) * 100);
     return (
-        <Section title="Config">
-            <Row label="Requests/sec" value={Math.round(d.requestsPerSecond)} />
-            <Row label="Read ratio" value={`${readPct}% read`} />
-        </Section>
+        <>
+            <Section title="Config">
+                <Row label="Requests/sec" value={Math.round(d.requestsPerSecond)} />
+                {(!d.archetypes || d.archetypes.length === 0) && (
+                    <Row label="Read ratio" value={`${readPct}% read`} />
+                )}
+            </Section>
+            {d.archetypes && d.archetypes.length > 0 && (
+                <Section title="Workload Archetypes">
+                    {d.archetypes.map((a) => (
+                        <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, padding: '3px 0' }}>
+                            <span style={{ color: '#e2e8f0' }}>{a.label}</span>
+                            <span style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{Math.round(a.weight * 100)}%</span>
+                        </div>
+                    ))}
+                    <div style={{ fontSize: 10, color: '#475569', marginTop: 6, fontStyle: 'italic' }}>
+                        readWriteRatio overridden by archetype weights
+                    </div>
+                </Section>
+            )}
+        </>
     );
 }
 

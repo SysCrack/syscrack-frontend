@@ -94,13 +94,13 @@ export type ComponentDetailData =
         poolSize?: number;
     }
     | { kind: 'app_server'; activeInstances: number; maxInstances: number; autoScaling: boolean; instanceType: string; distributedTransaction?: string; sagaCompensation?: string }
-    | { kind: 'database_sql'; engine: string; readCapacity: number; writeCapacity: number; readReplicas: number; connectionPooling: boolean; activeConnections: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number }
-    | { kind: 'database_nosql'; engine: string; consistencyLevel: string; capacity: number; utilization: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; quorumConditionMet?: boolean; quorumSummary?: string; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number }
-    | { kind: 'message_queue'; partitions: number; isFifo: boolean; queueDepth: number; enqueued: number; processed: number; deadLettered: number; droppedMessages?: number; deliveryGuarantee?: string }
+    | { kind: 'database_sql'; engine: string; readCapacity: number; writeCapacity: number; readReplicas: number; connectionPooling: boolean; activeConnections: number; instances?: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number; queryDistribution?: { query: string; count: number }[] }
+    | { kind: 'database_nosql'; engine: string; consistencyLevel: string; capacity: number; utilization: number; instances?: number; replicationLagMs?: number; staleReadCount?: number; isCompacting?: boolean; nextCompactionInSeconds?: number; quorumConditionMet?: boolean; quorumSummary?: string; isHotShard?: boolean; hotshardLatencyMultiplier?: number; shardCount?: number; queryDistribution?: { query: string; count: number }[] }
+    | { kind: 'message_queue'; partitions: number; isFifo: boolean; queueDepth: number; enqueued: number; processed: number; deadLettered: number; droppedMessages?: number; deliveryGuarantee?: string; queryDistribution?: { query: string; count: number }[] }
     | { kind: 'object_store'; storageClass: string; versioning?: boolean; lifecycleRules?: boolean; capacity?: number; utilization?: number }
     | { kind: 'dns'; recordType: string; routingPolicy: string }
     | { kind: 'api_gateway'; authEnabled: boolean; rateLimiting: boolean; rateLimit: number; allowed: number; dropped: number }
-    | { kind: 'client'; requestsPerSecond: number; readWriteRatio?: number }
+    | { kind: 'client'; requestsPerSecond: number; readWriteRatio?: number; archetypes?: { id: string; label: string; weight: number }[] }
     | {
         kind: 'worker';
         tasksProcessed: number;

@@ -169,7 +169,11 @@ export interface RequestParticle {
     method?: RequestMethod;
     readWrite?: ReadWrite;
     payloadSize?: PayloadSize;
-    path?: string;        // e.g. /users/123
+    path?: string;        // e.g. /users/123 or redirect:x7k2m
+    archetypeId?: string; // e.g. 'redirect-lookup'
+    archetypeLabel?: string; // e.g. 'Redirect lookup'
+    /** True when path comes from a semantic workload archetype, not a generic fallback. */
+    hasSemanticPath?: boolean;
 }
 
 // ── Live metrics ──
@@ -249,6 +253,10 @@ export class SimulationRunner {
     private proxyActiveConnections: Map<string, number> = new Map();
     private proxyQueueDepth: Map<string, number> = new Map();
 
+    // Workload Profile: Semantic Query Distribution
+    private dbQueryDistribution = new Map<string, Map<string, number>>();
+    private mqQueryDistribution = new Map<string, Map<string, number>>();
+
     // Message Queue State
     // Rather than raw Maps, we store MessageQueueModel instances
     public mqModels = new Map<string, MessageQueueModel>();
@@ -317,15 +325,17 @@ export class SimulationRunner {
 
     speed = 1.0;
     loadFactor = 1.0;
+    private workloadProfile?: WorkloadProfile;
 
     constructor(
         private nodes: CanvasNode[],
         private connections: CanvasConnection[],
         private callback: RunnerCallback,
-        options?: { onTraceComplete?: (trace: RequestTrace) => void },
+        options?: { onTraceComplete?: (trace: RequestTrace) => void; workloadProfile?: WorkloadProfile },
     ) {
         this.buildGraph();
         this.onTraceComplete = options?.onTraceComplete;
+        this.workloadProfile = options?.workloadProfile;
     }
 
     /** Update node configurations dynamically (e.g., when instances are changed during simulation) */
@@ -404,6 +414,27 @@ export class SimulationRunner {
 
         // Pre-compute routing semantics for all edges
         this.edgeSemantics = classifyEdges(this.nodes, this.connections);
+
+        // Initialize per-node query distributions for DBs and MQs so arrival
+        // tracking always has a map to write into (constructor-only path).
+        this.initQueryDistributions();
+    }
+
+    /**
+     * Initialize per-node query distribution maps for databases and message queues.
+     * Shared between constructor-time graph build and reset() to avoid drift.
+     */
+    private initQueryDistributions() {
+        this.dbQueryDistribution.clear();
+        this.mqQueryDistribution.clear();
+        for (const node of this.nodes) {
+            if (node.type === 'database_sql' || node.type === 'database_nosql') {
+                this.dbQueryDistribution.set(node.id, new Map());
+            }
+            if (node.type === 'message_queue') {
+                this.mqQueryDistribution.set(node.id, new Map());
+            }
+        }
     }
 
     start() {
@@ -467,7 +498,13 @@ export class SimulationRunner {
             if (node.type === 'database_sql' || node.type === 'database_nosql') {
                 this.dbModels.set(node.id, new DBReplicationModel(node));
             }
+            if (node.type === 'message_queue') {
+                this.mqModels.set(node.id, new MessageQueueModel(node));
+            }
         }
+
+        // Reset per-node query distributions in sync with DB/MQ model reset.
+        this.initQueryDistributions();
 
         this.circuitBreakerState.clear();
         this.circuitBreakerTripTick.clear();
@@ -817,14 +854,16 @@ export class SimulationRunner {
                 }
             }
 
-            // Allow specific config to override consumerGroupCount
+            const validConsumers = outEdges.filter((edge) => {
+                const t = this.nodeMap.get(edge.targetId)?.type;
+                return t && t !== 'object_store' && t !== 'database_sql' && t !== 'database_nosql';
+            });
+
             const sc = node.sharedConfig as any;
             const c = node.specificConfig as any;
             const consumerGroupCount = c?.consumerGroupCount ?? sc?.scaling?.consumerGroupCount ?? 1;
-
             const guarantee = c?.deliveryGuarantee;
 
-            // At-least-once replay logic: check if any consumer just recovered
             if (guarantee === 'at-least-once') {
                 for (const edge of outEdges) {
                     const consumerId = edge.targetId;
@@ -833,7 +872,6 @@ export class SimulationRunner {
                     const wasFailing = this.previousNodeFailure.get(consumerId) ?? false;
 
                     if (wasFailing && !isFailingNow) {
-                        // Consumer recovered! Replay 5% of all processed messages
                         const replayCount = Math.floor(mqModel.totalProcessed * 0.05);
                         if (replayCount > 0) {
                             mqModel.enqueue(replayCount);
@@ -843,10 +881,14 @@ export class SimulationRunner {
                 }
             }
 
-            // Apply exactly-once throughput reduction (15% overhead for txn coordination)
-            const effectiveConsumerThroughput = guarantee === 'exactly-once'
-                ? totalConsumerCapacity * 0.85
-                : totalConsumerCapacity;
+            let effectiveConsumerThroughput: number;
+            if (validConsumers.length === 0) {
+                effectiveConsumerThroughput = 0;
+            } else {
+                effectiveConsumerThroughput = guarantee === 'exactly-once'
+                    ? totalConsumerCapacity * 0.85
+                    : totalConsumerCapacity;
+            }
 
             const processed = mqModel.dequeue(effectiveConsumerThroughput * (cappedDt / 1000), consumerGroupCount);
 
@@ -913,8 +955,18 @@ export class SimulationRunner {
 
                 while (acc >= 1) {
                     acc -= 1;
-                    const rw = this.sampleReadWrite(node);
-                    this.spawnFromNode(node.id, requestsPerParticle, undefined, undefined, rw);
+                    const arch = this.sampleArchetype(node);
+                    this.spawnFromNode(
+                        node.id,
+                        requestsPerParticle,
+                        undefined,
+                        undefined,
+                        arch.readWrite,
+                        arch.path,
+                        arch.archetypeId,
+                        arch.archetypeLabel,
+                        arch.hasSemanticPath,
+                    );
 
                     this.nodeRecentArrivals.set(
                         node.id,
@@ -1053,7 +1105,17 @@ export class SimulationRunner {
 
     // ── Spawn ──
 
-    private spawnFromNode(nodeId: string, count: number, traceId?: string, parentParticle?: RequestParticle, readWriteOverride?: ReadWrite) {
+    private spawnFromNode(
+        nodeId: string,
+        count: number,
+        traceId?: string,
+        parentParticle?: RequestParticle,
+        readWriteOverride?: ReadWrite,
+        pathOverride?: string,
+        archetypeIdOverride?: string,
+        archetypeLabelOverride?: string,
+        hasSemanticPathOverride?: boolean,
+    ) {
         const outConns = this.connectionsBySource.get(nodeId) ?? [];
         const node = this.nodeMap.get(nodeId);
         if (!node) return;
@@ -1077,6 +1139,26 @@ export class SimulationRunner {
         }
 
         this.nodeRequestCount.set(nodeId, (this.nodeRequestCount.get(nodeId) ?? 0) + count);
+
+        // Synthesize a parentParticle carrying archetype fields when overrides are provided.
+        // This ensures archetype data propagates through spawnFromLB, spawnFromProxy,
+        // spawnFromCache, spawnFromDNS via their `pp` parameter.
+        if (!parentParticle && (archetypeIdOverride || archetypeLabelOverride || pathOverride || readWriteOverride)) {
+            parentParticle = {
+                id: '__synthetic__',
+                connectionId: '',
+                t: 0,
+                count,
+                color: '',
+                sourceId: nodeId,
+                targetId: '',
+                readWrite: readWriteOverride,
+                path: pathOverride,
+                archetypeId: archetypeIdOverride,
+                archetypeLabel: archetypeLabelOverride,
+                hasSemanticPath: hasSemanticPathOverride,
+            };
+        }
 
         if (nodeType === 'load_balancer') {
             this.spawnFromLB(node, outConns, count, traceId, parentParticle);
@@ -1218,7 +1300,8 @@ export class SimulationRunner {
         }
 
         const algo = (node.specificConfig as Record<string, unknown>).algorithm as string || 'round-robin';
-        const outConns = lbModel.getHealthyConnections(outConnsRaw);
+        const outConnsWithoutCBOpen = outConnsRaw.filter((c) => this.circuitBreakerState.get(c.targetId) !== 'open');
+        const outConns = lbModel.getHealthyConnections(outConnsWithoutCBOpen);
 
         if (outConns.length === 0) return;
 
@@ -1298,7 +1381,8 @@ export class SimulationRunner {
         }
 
         const algo = (node.specificConfig as Record<string, unknown>).algorithm as string || 'round-robin';
-        const outConns = proxyModel.getHealthyConnections(outConnsRaw);
+        const outConnsWithoutCBOpen = outConnsRaw.filter((c) => this.circuitBreakerState.get(c.targetId) !== 'open');
+        const outConns = proxyModel.getHealthyConnections(outConnsWithoutCBOpen);
 
         if (outConns.length === 0) return;
 
@@ -1390,6 +1474,7 @@ export class SimulationRunner {
 
         let hits = 0;
         let misses = 0;
+        const semanticKey = pp?.hasSemanticPath && pp.path ? pp.path : undefined;
 
         // Traced with path: use path as cache key
         if (traceId && pp?.path && sim) {
@@ -1417,21 +1502,22 @@ export class SimulationRunner {
                 for (let i = 0; i < count; i++) {
                     if (Math.random() < hitRate) {
                         hits++;
-                        const key = CacheEntrySimulator.randomKeyFromPool();
+                        const key = semanticKey ?? CacheEntrySimulator.randomKeyFromPool();
                         if (sim) sim.recordHit(key);
                         if (writeStrategy === 'write-behind' && cacheModel && cacheModel.checkStaleRead(key, this.tick)) {
                             cacheModel.recordStaleRead(1);
                         }
                     } else {
                         misses++;
-                        if (sim) sim.recordMiss(CacheEntrySimulator.randomKeyFromPool());
+                        const missKey = semanticKey ?? CacheEntrySimulator.randomKeyFromPool();
+                        if (sim) sim.recordMiss(missKey);
                     }
                 }
             } else if (sim) {
                 // Entry-based simulation: sample keys realistically
                 let perKeyStaleReads = 0;
                 for (let i = 0; i < count; i++) {
-                    const key = CacheEntrySimulator.randomKeyFromPool();
+                    const key = semanticKey ?? CacheEntrySimulator.randomKeyFromPool();
                     const forceMiss = cacheModel?.consumeWriteAroundMiss(key);
                     if (forceMiss || isFlushed || !sim.hasKey(key)) {
                         misses++;
@@ -1558,7 +1644,11 @@ export class SimulationRunner {
     ) {
         const sim = this.cacheSimulators.get(node.id);
         const cacheModel = this.cacheModels.get(node.id);
-        const key = (traceId && pp?.path) ? pp.path : (sim ? CacheEntrySimulator.randomKeyFromPool() : '/unknown');
+        const key = (pp?.hasSemanticPath && pp.path)
+            ? pp.path
+            : (traceId && pp?.path)
+                ? pp.path
+                : (sim ? CacheEntrySimulator.randomKeyFromPool() : '/unknown');
 
         switch (writeStrategy) {
             case 'write-through': {
@@ -2117,6 +2207,23 @@ export class SimulationRunner {
             const dbModel = this.dbModels.get(targetNode.id);
             const tickDurationMs = 100 / this.speed;
 
+            // Workload-aware DB query distribution: prefer archetype.dbLabel when available.
+            if (this.workloadProfile && particle.archetypeId) {
+                const arch = this.workloadProfile.archetypes.find((a) => a.id === particle.archetypeId);
+                const label = arch?.dbLabel ?? arch?.label ?? particle.archetypeLabel;
+                if (label) {
+                    const qMap = this.dbQueryDistribution.get(targetNode.id);
+                    if (qMap) {
+                        qMap.set(label, (qMap.get(label) ?? 0) + particle.count);
+                    }
+                }
+            } else if (particle.archetypeLabel) {
+                const qMap = this.dbQueryDistribution.get(targetNode.id);
+                if (qMap) {
+                    qMap.set(particle.archetypeLabel, (qMap.get(particle.archetypeLabel) ?? 0) + particle.count);
+                }
+            }
+
             if (dbModel) {
                 if (currRw === 'write') {
                     const writeResult = dbModel.routeWrite(this.tick, tickDurationMs);
@@ -2173,6 +2280,18 @@ export class SimulationRunner {
             if (mqModel) {
                 const backpressure = (targetNode.specificConfig as any)?.backpressure ?? 'block';
                 const action = mqModel.applyBackpressure(backpressure);
+
+                // Workload-aware MQ distribution: only archetypes with explicit mqLabel contribute.
+                if (this.workloadProfile && particle.archetypeId) {
+                    const arch = this.workloadProfile.archetypes.find((a) => a.id === particle.archetypeId);
+                    const mqLabel = arch?.mqLabel;
+                    if (mqLabel) {
+                        const qMap = this.mqQueryDistribution.get(targetNode.id);
+                        if (qMap) {
+                            qMap.set(mqLabel, (qMap.get(mqLabel) ?? 0) + particle.count);
+                        }
+                    }
+                }
 
                 if (action === 'drop') {
                     // Record error on the upstream node that sent this particle
@@ -2243,6 +2362,9 @@ export class SimulationRunner {
         parentParticle?: RequestParticle,
         readWriteOverride?: ReadWrite,
         parentTraceEventId?: string,
+        archetypeIdOverride?: string,
+        archetypeLabelOverride?: string,
+        pathOverride?: string,
     ) {
         const id = `p${nextParticleId++}`;
         const rw = readWriteOverride ?? parentParticle?.readWrite;
@@ -2271,7 +2393,10 @@ export class SimulationRunner {
             method: parentParticle?.method,
             readWrite: rw,
             payloadSize: parentParticle?.payloadSize,
-            path: parentParticle?.path,
+            path: pathOverride ?? parentParticle?.path,
+            archetypeId: archetypeIdOverride ?? parentParticle?.archetypeId,
+            archetypeLabel: archetypeLabelOverride ?? parentParticle?.archetypeLabel,
+            hasSemanticPath: parentParticle?.hasSemanticPath ?? false,
         });
 
         this.nodeActiveCount.set(
@@ -2301,6 +2426,44 @@ export class SimulationRunner {
     private sampleReadWrite(node: CanvasNode): ReadWrite {
         const ratio = this.getClientReadWriteRatio(node);
         return Math.random() < ratio ? 'read' : 'write';
+    }
+
+    private sampleArchetype(node: CanvasNode): {
+        readWrite: ReadWrite;
+        path?: string;
+        archetypeId?: string;
+        archetypeLabel?: string;
+        hasSemanticPath: boolean;
+    } {
+        if (!this.workloadProfile || this.workloadProfile.archetypes.length === 0) {
+            return { readWrite: this.sampleReadWrite(node), hasSemanticPath: false };
+        }
+
+        const r = Math.random();
+        let cumulative = 0;
+        let selected: RequestArchetype = this.workloadProfile.archetypes[this.workloadProfile.archetypes.length - 1];
+
+        for (const arch of this.workloadProfile.archetypes) {
+            cumulative += arch.weight;
+            if (r <= cumulative) {
+                selected = arch;
+                break;
+            }
+        }
+
+        let path: string | undefined = undefined;
+        if (selected.cacheKeyPattern && selected.sampleIds.length > 0) {
+            const id = selected.sampleIds[Math.floor(Math.random() * selected.sampleIds.length)];
+            path = selected.cacheKeyPattern.replace('{id}', id).replace('{code}', id);
+        }
+
+        return {
+            readWrite: selected.method,
+            path,
+            archetypeId: selected.id,
+            archetypeLabel: selected.label,
+            hasSemanticPath: !!path,
+        };
     }
 
     /** Cache topology: edge (CDN→Cache), backend (App→Cache→DB), blob (App→Cache→Object Store), l2 (Cache→Cache). */
@@ -2797,9 +2960,12 @@ export class SimulationRunner {
                 case 'database_sql': {
                     const cap = this.getNodeCapacity(node);
                     const dbModel = this.dbModels.get(node.id);
+                    const instancesSql = node.sharedConfig?.scaling?.instances ?? 1;
                     if (dbModel) {
                         const lagMs = dbModel.getReplicationLagMs();
-                        detail.replicationLagMs = lagMs;
+                        if (instancesSql > 1) {
+                            detail.replicationLagMs = lagMs;
+                        }
                         detail.staleReadCount = dbModel.getStaleReadCount();
 
                         const diagnostics: string[] = detail.diagnostics ?? [];
@@ -2808,7 +2974,7 @@ export class SimulationRunner {
                             diagnostics.push(
                                 `Async replication: committed writes may be lost if the leader crashes before replicas catch up`
                             );
-                            if (dbModel.getStaleReadCount() > 0) {
+                            if (instancesSql > 1 && dbModel.getStaleReadCount() > 0) {
                                 diagnostics.push(
                                     `Reads-your-writes not guaranteed: replica lag ~${dbModel.replicationLagMs}ms`
                                 );
@@ -2816,7 +2982,7 @@ export class SimulationRunner {
                         }
 
                         // TC-042 — data loss warning after async failover
-                        if (node.sharedConfig.chaos?.nodeFailure &&
+                        if (instancesSql > 1 && node.sharedConfig.chaos?.nodeFailure &&
                             dbModel.replicationMode === 'single-leader' &&
                             dbModel.syncMode === 'asynchronous') {
                             diagnostics.push(
@@ -2893,6 +3059,11 @@ export class SimulationRunner {
                         if (diagnostics.length > 0) detail.diagnostics = diagnostics;
                     }
 
+                    const queryMapSql = this.dbQueryDistribution.get(node.id);
+                    const queryDistributionSql = queryMapSql
+                        ? Array.from(queryMapSql.entries()).map(([query, count]) => ({ query, count })).sort((a, b) => b.count - a.count)
+                        : undefined;
+
                     detail.componentDetail = {
                         kind: 'database_sql',
                         engine: (c.engine as string) ?? 'postgresql',
@@ -2901,9 +3072,11 @@ export class SimulationRunner {
                         readReplicas: (c.readReplicas as number) ?? 0,
                         connectionPooling: (c.connectionPooling as boolean) ?? true,
                         activeConnections: this.nodeActiveCount.get(node.id) ?? 0,
-                        replicationLagMs: detail.replicationLagMs,
+                        instances: instancesSql,
+                        ...(instancesSql > 1 && detail.replicationLagMs != null && { replicationLagMs: detail.replicationLagMs }),
                         isCompacting: dbModel?.isCompacting() ?? false,
                         nextCompactionInSeconds: dbModel?.getNextCompactionInSeconds(this.tick, 100 / this.speed) ?? 0,
+                        ...(queryDistributionSql && { queryDistribution: queryDistributionSql }),
                         ...(detail.shardCount != null && { shardCount: detail.shardCount }),
                         ...(detail.isHotShard && { isHotShard: true, hotshardLatencyMultiplier: detail.hotshardLatencyMultiplier }),
                     };
@@ -2912,9 +3085,12 @@ export class SimulationRunner {
                 case 'database_nosql': {
                     const cap = this.getNodeCapacity(node);
                     const dbModel = this.dbModels.get(node.id);
+                    const instancesNoSql = node.sharedConfig?.scaling?.instances ?? 1;
                     if (dbModel) {
                         const lagMs = dbModel.getReplicationLagMs();
-                        detail.replicationLagMs = lagMs;
+                        if (instancesNoSql > 1) {
+                            detail.replicationLagMs = lagMs;
+                        }
                         detail.staleReadCount = dbModel.getStaleReadCount();
 
                         const diagnostics: string[] = detail.diagnostics ?? [];
@@ -2923,7 +3099,7 @@ export class SimulationRunner {
                             diagnostics.push(
                                 `Async replication: committed writes may be lost if the leader crashes before replicas catch up`
                             );
-                            if (dbModel.getStaleReadCount() > 0) {
+                            if (instancesNoSql > 1 && dbModel.getStaleReadCount() > 0) {
                                 diagnostics.push(
                                     `Reads-your-writes not guaranteed: replica lag ~${dbModel.replicationLagMs}ms`
                                 );
@@ -2931,7 +3107,7 @@ export class SimulationRunner {
                         }
 
                         // TC-042 — data loss warning after async failover
-                        if (node.sharedConfig.chaos?.nodeFailure &&
+                        if (instancesNoSql > 1 && node.sharedConfig.chaos?.nodeFailure &&
                             dbModel.replicationMode === 'single-leader' &&
                             dbModel.syncMode === 'asynchronous') {
                             diagnostics.push(
@@ -3035,15 +3211,22 @@ export class SimulationRunner {
                         if (diagnostics.length > 0) detail.diagnostics = diagnostics;
                     }
 
+                    const queryMapNoSql = this.dbQueryDistribution.get(node.id);
+                    const queryDistributionNoSql = queryMapNoSql
+                        ? Array.from(queryMapNoSql.entries()).map(([query, count]) => ({ query, count })).sort((a, b) => b.count - a.count)
+                        : undefined;
+
                     detail.componentDetail = {
                         kind: 'database_nosql',
                         engine: (c.engine as string) ?? 'dynamodb',
                         consistencyLevel: (c.consistencyLevel as string) ?? 'eventual',
                         capacity: cap,
                         utilization,
-                        replicationLagMs: detail.replicationLagMs,
+                        instances: instancesNoSql,
+                        ...(instancesNoSql > 1 && detail.replicationLagMs != null && { replicationLagMs: detail.replicationLagMs }),
                         isCompacting: dbModel?.isCompacting() ?? false,
                         nextCompactionInSeconds: dbModel?.getNextCompactionInSeconds(this.tick, 100 / this.speed) ?? 0,
+                        ...(queryDistributionNoSql && { queryDistribution: queryDistributionNoSql }),
                         ...(detail.quorumSummary != null && { quorumConditionMet: detail.quorumConditionMet, quorumSummary: detail.quorumSummary }),
                         ...(detail.shardCount != null && { shardCount: detail.shardCount }),
                         ...(detail.isHotShard && { isHotShard: true, hotshardLatencyMultiplier: detail.hotshardLatencyMultiplier }),
@@ -3106,6 +3289,11 @@ export class SimulationRunner {
                         );
                     }
 
+                    const queryMapMq = this.mqQueryDistribution.get(node.id);
+                    const queryDistributionMq = queryMapMq
+                        ? Array.from(queryMapMq.entries()).map(([query, count]) => ({ query, count })).sort((a, b) => b.count - a.count)
+                        : undefined;
+
                     detail.componentDetail = {
                         kind: 'message_queue',
                         partitions: sc.scaling?.instances ?? 1,
@@ -3116,6 +3304,7 @@ export class SimulationRunner {
                         deadLettered: 0,
                         droppedMessages: mqModel?.droppedMessages ?? 0,
                         deliveryGuarantee: mqGuarantee,
+                        ...(queryDistributionMq && { queryDistribution: queryDistributionMq }),
                     };
                     break;
                 }
@@ -3267,10 +3456,16 @@ export class SimulationRunner {
                     break;
                 }
                 case 'client': {
+                    const clientArchetypes = this.workloadProfile?.archetypes.map((a: RequestArchetype) => ({
+                        id: a.id,
+                        label: a.label,
+                        weight: a.weight,
+                    }));
                     detail.componentDetail = {
                         kind: 'client',
                         requestsPerSecond: this.getClientRps(node),
                         readWriteRatio: this.getClientReadWriteRatio(node),
+                        ...(clientArchetypes && clientArchetypes.length > 0 && { archetypes: clientArchetypes }),
                     };
                     break;
                 }

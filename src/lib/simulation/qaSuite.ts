@@ -1,6 +1,8 @@
 import type { CanvasNode, CanvasConnection } from '@/lib/types/canvas';
 import { SimulationRunner, LiveMetrics } from './SimulationRunner';
 import type { RequestTrace } from './types';
+import type { WorkloadProfile } from '../templates/types';
+import { urlShortenerTemplate } from '../templates/definitions/urlShortener';
 import { COMPONENT_CATALOG, getCatalogEntry } from '@/lib/data/componentCatalog';
 import { DEFAULT_SHARED_CONFIG } from '@/lib/types/canvas';
 
@@ -21,6 +23,7 @@ interface RunSimOptions {
     ticks?: number;
     speed?: number;
     loadFactor?: number;
+    workloadProfile?: WorkloadProfile;
 }
 
 function makeNode(
@@ -58,9 +61,14 @@ function runSim(
     options?: RunSimOptions,
 ): LiveMetrics {
     let lastMetrics: LiveMetrics | null = null;
-    const runner = new SimulationRunner(nodes, connections, (particles, metrics) => {
-        lastMetrics = metrics;
-    });
+    const runner = new SimulationRunner(
+        nodes,
+        connections,
+        (_particles, metrics) => {
+            lastMetrics = metrics;
+        },
+        options?.workloadProfile ? { workloadProfile: options.workloadProfile } : undefined,
+    );
 
     if (options?.speed != null) runner.setSpeed(options.speed);
     if (options?.loadFactor != null) runner.setLoadFactor(options.loadFactor);
@@ -999,6 +1007,103 @@ function runTC063(): QaResult {
 }
 
 // ---------------------------------------------------------
+// TC-070: Workload Archetype — Cache Keys are Semantic
+// ---------------------------------------------------------
+function runTC070(): QaResult {
+    const tpl = urlShortenerTemplate;
+    const cacheNode = tpl.nodes.find((n) => n.type === 'cache');
+    if (!cacheNode) {
+        return { id: 'TC-070', name: 'Workload Archetype — Cache Keys are Semantic', passed: false, failures: ['URL Shortener template missing cache node'] };
+    }
+
+    const metrics = runSim(tpl.nodes, tpl.connections, 500, { workloadProfile: tpl.workloadProfile });
+    const failures: string[] = [];
+
+    const cacheDetail = metrics.nodeMetrics[cacheNode.id]?.componentDetail as any;
+    const entries: Array<{ key: string }> = cacheDetail?.entries ?? [];
+    if (entries.length === 0) {
+        failures.push('Cache had 0 entries; expected semantic keys from workload archetypes');
+    } else {
+        const semanticCount = entries.filter((e) => typeof e.key === 'string' && e.key.startsWith('redirect:')).length;
+        const ratio = semanticCount / entries.length;
+        if (ratio < 0.8) {
+            failures.push(`Only ${(ratio * 100).toFixed(1)}% of cache keys were 'redirect:*'; expected at least 80% semantic redirect keys`);
+        }
+    }
+
+    return { id: 'TC-070', name: 'Workload Archetype — Cache Keys are Semantic', passed: failures.length === 0, failures };
+}
+
+// ---------------------------------------------------------
+// TC-071: Workload Archetype — DB Query Distribution Tracked
+// ---------------------------------------------------------
+function runTC071(): QaResult {
+    const tpl = urlShortenerTemplate;
+    const dbNode = tpl.nodes.find((n) => n.type === 'database_sql' || n.type === 'database_nosql');
+    if (!dbNode) {
+        return { id: 'TC-071', name: 'Workload Archetype — DB Query Distribution Tracked', passed: false, failures: ['URL Shortener template missing DB node'] };
+    }
+
+    const metrics = runSim(tpl.nodes, tpl.connections, 500, { workloadProfile: tpl.workloadProfile });
+    const failures: string[] = [];
+
+    const dbDetail = metrics.nodeMetrics[dbNode.id]?.componentDetail as any;
+    const dist: Array<{ query: string; count: number }> = dbDetail?.queryDistribution ?? [];
+    if (!dist || dist.length === 0) {
+        failures.push('DB queryDistribution was empty; expected workload archetype queries');
+    } else {
+        const expectedQueries = new Set(
+            (tpl.workloadProfile?.archetypes ?? [])
+                .map((a) => a.dbLabel)
+                .filter((q): q is string => typeof q === 'string'),
+        );
+        const present = new Set(
+            dist.filter((d) => expectedQueries.has(d.query) && d.count > 0).map((d) => d.query),
+        );
+        // For now we only require that at least one expected workload query label
+        // appears in the DB distribution. Full coverage of all archetype dbLabels
+        // can be tightened later if we move this test to a simplified topology.
+        if (present.size === 0) {
+            failures.push(`DB queryDistribution did not contain any expected workload queries. Expected one of: ${Array.from(expectedQueries).join(', ')}; Found: ${dist.map((d) => d.query).join(', ')}`);
+        }
+    }
+
+    return { id: 'TC-071', name: 'Workload Archetype — DB Query Distribution Tracked', passed: failures.length === 0, failures };
+}
+
+// ---------------------------------------------------------
+// TC-072: Workload Archetype — Client Detail Shows Archetypes
+// ---------------------------------------------------------
+function runTC072(): QaResult {
+    const tpl = urlShortenerTemplate;
+    const clientNode = tpl.nodes.find((n) => n.type === 'client');
+    if (!clientNode) {
+        return { id: 'TC-072', name: 'Workload Archetype — Client Detail Shows Archetypes', passed: false, failures: ['URL Shortener template missing client node'] };
+    }
+
+    const metrics = runSim(tpl.nodes, tpl.connections, 200, { workloadProfile: tpl.workloadProfile });
+    const failures: string[] = [];
+
+    const clientDetail = metrics.nodeMetrics[clientNode.id]?.componentDetail as any;
+    const archetypes: Array<{ id: string; label: string; weight: number }> = clientDetail?.archetypes ?? [];
+
+    const expected = tpl.workloadProfile?.archetypes ?? [];
+    if (expected.length === 0) {
+        failures.push('Template workloadProfile had no archetypes');
+    }
+    if (archetypes.length !== expected.length) {
+        failures.push(`Client reported ${archetypes.length} archetypes; expected ${expected.length}`);
+    }
+
+    const sumWeights = archetypes.reduce((sum, a) => sum + a.weight, 0);
+    if (sumWeights < 0.95 || sumWeights > 1.05) {
+        failures.push(`Client archetype weights summed to ${sumWeights.toFixed(2)}; expected ≈ 1.0`);
+    }
+
+    return { id: 'TC-072', name: 'Workload Archetype — Client Detail Shows Archetypes', passed: failures.length === 0, failures };
+}
+
+// ---------------------------------------------------------
 // TC-064: Debug — Sequential Inject Trace Ordering
 // ---------------------------------------------------------
 function runTC064(): QaResult {
@@ -1252,6 +1357,7 @@ function runTC013(): QaResult {
         makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 200, readWriteRatio: 0.8 } }),
         makeNode('app1', 'app_server', 'App Server', 200, 0),
         makeNode('db1', 'database_sql', 'DB Primary', 400, 0, {
+            shared: { scaling: { instances: 2 } },
             specific: {
                 replication: {
                     mode: 'single-leader',
@@ -1301,6 +1407,7 @@ function runTC042(): QaResult {
         makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 100, readWriteRatio: 0.5 } }),
         makeNode('app1', 'app_server', 'App Server', 200, 0),
         makeNode('db1', 'database_sql', 'DB Primary', 400, 0, {
+            shared: { scaling: { instances: 2 }, chaos: { nodeFailure: true } },
             specific: {
                 replication: {
                     mode: 'single-leader',
@@ -1309,7 +1416,6 @@ function runTC042(): QaResult {
                 },
                 readReplicas: 1,
             },
-            shared: { chaos: { nodeFailure: true } },
         }),
     ];
     const connections = [
@@ -1837,5 +1943,8 @@ export function runQaSuite(): QaResult[] {
         runTC062(),
         runTC063(),
         runTC064(),
+        runTC070(),
+        runTC071(),
+        runTC072(),
     ];
 }

@@ -19,6 +19,9 @@ import type {
 import { createNode, createConnection } from '@/lib/types/canvas';
 import { getCatalogEntry } from '@/lib/data/componentCatalog';
 import { validateConnection, getDefaultProtocol } from '@/lib/connectionRules';
+import type { ScenarioTemplate } from '@/lib/templates/types';
+
+const AUTOSAVE_KEY = 'syscrack-canvas-autosave';
 
 // ============ Interaction Modes ============
 
@@ -35,6 +38,8 @@ interface CanvasStore {
     viewport: Viewport;
     mode: InteractionMode;
     isDirty: boolean;
+    activeTemplateId: string | null;
+    templateBannerDismissed: boolean;
 
     // Connection drawing state
     connectingFrom: string | null;
@@ -81,6 +86,13 @@ interface CanvasStore {
     deleteSelected: () => void;
     loadDesign: (nodes: CanvasNode[], connections: CanvasConnection[]) => void;
     reset: () => void;
+
+    // ── Templates & Persistence ──
+    saveToLocalStorage: () => void;
+    loadFromLocalStorage: () => boolean;
+    hasUnsavedWork: () => boolean;
+    loadTemplate: (template: ScenarioTemplate) => void;
+    clearTemplate: () => void;
 }
 
 // ============ Store Implementation ============
@@ -95,6 +107,8 @@ export const useCanvasStore = create<CanvasStore>()(
         viewport: { x: 0, y: 0, scale: 1 },
         mode: 'select',
         isDirty: false,
+        activeTemplateId: null,
+        templateBannerDismissed: false,
         connectingFrom: null,
         connectingToPoint: null,
         connectionValidationError: null,
@@ -369,6 +383,75 @@ export const useCanvasStore = create<CanvasStore>()(
                 s.isDirty = false;
                 s.connectingFrom = null;
                 s.connectingToPoint = null;
+                s.activeTemplateId = null;
+                s.templateBannerDismissed = false;
             }),
+
+        // ── Templates & Persistence ──
+
+        saveToLocalStorage: () => {
+            const { nodes, connections } = get();
+            try {
+                localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
+                    nodes, connections, savedAt: new Date().toISOString(),
+                }));
+            } catch { /* storage full — fail silently */ }
+        },
+
+        loadFromLocalStorage: () => {
+            try {
+                const raw = localStorage.getItem(AUTOSAVE_KEY);
+                if (!raw) return false;
+                const { nodes, connections } = JSON.parse(raw);
+                if (!Array.isArray(nodes) || !Array.isArray(connections)) return false;
+                set({ nodes, connections });
+                return true;
+            } catch { return false; }
+        },
+
+        hasUnsavedWork: () => {
+            return get().nodes.length > 0;
+        },
+
+        loadTemplate: (template) => {
+            // Step 1: stop any running simulation
+            // Import dynamically to avoid circular dependency
+            const { useCanvasSimulationStore } = require('@/stores/canvasSimulationStore');
+            useCanvasSimulationStore.getState().reset();
+
+            // Step 2: replace canvas
+            set((s) => {
+                s.nodes = template.nodes as any;
+                s.connections = template.connections as any;
+                s.activeTemplateId = template.id;
+                s.templateBannerDismissed = false;
+                s.selectedNodeIds = [];
+                s.selectedConnectionId = null;
+                s.isDirty = false;
+            });
+
+            // Step 3: persist
+            get().saveToLocalStorage();
+        },
+
+        clearTemplate: () => {
+            set({ activeTemplateId: null, templateBannerDismissed: false });
+            get().saveToLocalStorage();
+        },
     })),
 );
+
+// ── Auto-save on mutations (debounced 1s) ──
+let _autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+let _prevNodes: CanvasNode[] = [];
+let _prevConns: CanvasConnection[] = [];
+useCanvasStore.subscribe((state) => {
+    if (state.nodes !== _prevNodes || state.connections !== _prevConns) {
+        _prevNodes = state.nodes;
+        _prevConns = state.connections;
+        if (_autosaveTimer) clearTimeout(_autosaveTimer);
+        _autosaveTimer = setTimeout(() => {
+            useCanvasStore.getState().saveToLocalStorage();
+        }, 1000);
+    }
+});
