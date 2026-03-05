@@ -357,8 +357,8 @@ function ObjectStoreDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'obj
     return (
         <Section title="Config">
             <Row label="Storage class" value={d.storageClass} />
-            <Row label="Capacity" value={d.capacity} />
-            <Row label="Utilization" value={`${(d.utilization * 100).toFixed(1)}%`} />
+            {d.capacity != null && <Row label="Capacity" value={d.capacity} />}
+            {d.utilization != null && <Row label="Utilization" value={`${(d.utilization * 100).toFixed(1)}%`} />}
         </Section>
     );
 }

@@ -14,6 +14,7 @@
  *   - DB/Queue/Store: absorbs (leaf node)
  */
 import type { CanvasNode, CanvasConnection, CanvasComponentType } from '@/lib/types/canvas';
+import type { WorkloadProfile, RequestArchetype } from '@/lib/templates/types';
 import { PROTOCOL_FACTORS } from '@/lib/connectionRules';
 import type { NodeSimSummary, NodeDetailMetrics, CacheEntry, RequestTraceEvent, RequestTrace, RequestMethod, ReadWrite, PayloadSize } from './types';
 import { methodToReadWrite, PAYLOAD_LATENCY_MULTIPLIER } from './types';
