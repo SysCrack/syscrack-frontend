@@ -6,7 +6,6 @@
  */
 import { create } from 'zustand';
 import type { SimulationOutput, SimulationDiagnostic, ScenarioResult, NodeSimSummary, NodeDetailMetrics, RequestTrace, RequestMethod, PayloadSize } from '@/lib/simulation/types';
-import { SimulationEngine } from '@/lib/simulation/SimulationEngine';
 import type { RequestParticle, LiveMetrics } from '@/lib/simulation/SimulationRunner';
 import type { WorkerTickMessage } from '@/lib/simulation/simulation.worker';
 import { useCanvasStore } from './canvasStore';
@@ -79,59 +78,69 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             return;
         }
 
-        // Terminate previous worker if any
-        const prev = get()._worker;
-        if (prev) prev.terminate();
-
-        // Static engine run on main thread for results panel
-        const engine = new SimulationEngine(nodes, connections);
-        const output = engine.run(60);
-
+        // Snapshot current controls and template before kicking off async work.
         const speed = get().speed;
         const loadFactor = get().loadFactor;
         const activeTemplateId = useCanvasStore.getState().activeTemplateId;
         const template = activeTemplateId ? getTemplateById(activeTemplateId) : undefined;
         const workloadProfile = template?.workloadProfile;
 
-        let worker: Worker;
-        try {
-            worker = new Worker(
-                new URL('../lib/simulation/simulation.worker.ts', import.meta.url),
-                { type: 'module' },
-            );
-        } catch {
-            set({ error: 'Web Worker not supported', status: 'error' });
-            return;
-        }
+        // Lazy-load the heavy SimulationEngine so this store can be safely imported
+        // in production bundles without pulling in the entire simulation stack up front.
+        import('@/lib/simulation/SimulationEngine')
+            .then(({ SimulationEngine }) => {
+                // Terminate previous worker if any
+                const prev = get()._worker;
+                if (prev) prev.terminate();
 
-        worker.onmessage = (e: MessageEvent<WorkerTickMessage | { type: 'trace'; trace: RequestTrace }>) => {
-            const d = e.data;
-            if (d.type === 'tick') {
-                // When paused, only accept ticks from explicit Step (fromStep); ignore stray interval ticks
-                const status = get().status;
-                if (status === 'paused' && !d.fromStep) return;
-                set({ particles: d.particles, liveMetrics: d.metrics, tick: d.tick });
-            } else if (d.type === 'trace') {
-                set((s) => ({ traceHistory: [...s.traceHistory, d.trace] }));
-            }
-        };
+                // Static engine run on main thread for results panel
+                const engine = new SimulationEngine(nodes, connections);
+                const output = engine.run(60);
 
-        worker.postMessage({ type: 'init', nodes, connections, speed, loadFactor, workloadProfile });
-        worker.postMessage({ type: 'start' });
+                let worker: Worker;
+                try {
+                    worker = new Worker(
+                        new URL('../lib/simulation/simulation.worker.ts', import.meta.url),
+                        { type: 'module' },
+                    );
+                } catch {
+                    set({ error: 'Web Worker not supported', status: 'error' });
+                    return;
+                }
 
-        set({
-            status: 'running',
-            output,
-            selectedScenario: 0,
-            error: null,
-            _worker: worker,
-            particles: [],
-            liveMetrics: null,
-            tick: 0,
-            _paused: false,
-            _debugMode: false,
-            traceHistory: [],
-        });
+                worker.onmessage = (e: MessageEvent<WorkerTickMessage | { type: 'trace'; trace: RequestTrace }>) => {
+                    const d = e.data;
+                    if (d.type === 'tick') {
+                        // When paused, only accept ticks from explicit Step (fromStep); ignore stray interval ticks
+                        const status = get().status;
+                        if (status === 'paused' && !d.fromStep) return;
+                        set({ particles: d.particles, liveMetrics: d.metrics, tick: d.tick });
+                    } else if (d.type === 'trace') {
+                        set((s) => ({ traceHistory: [...s.traceHistory, d.trace] }));
+                    }
+                };
+
+                worker.postMessage({ type: 'init', nodes, connections, speed, loadFactor, workloadProfile });
+                worker.postMessage({ type: 'start' });
+
+                set({
+                    status: 'running',
+                    output,
+                    selectedScenario: 0,
+                    error: null,
+                    _worker: worker,
+                    particles: [],
+                    liveMetrics: null,
+                    tick: 0,
+                    _paused: false,
+                    _debugMode: false,
+                    traceHistory: [],
+                });
+            })
+            .catch((err) => {
+                console.error('Failed to initialize SimulationEngine', err);
+                set({ error: 'Failed to initialize simulation engine', status: 'error' });
+            });
     },
 
     startDebugMode: () => {

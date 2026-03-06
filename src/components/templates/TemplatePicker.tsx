@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { ALL_TEMPLATES, getTemplateById } from '@/lib/templates';
 import type { ScenarioTemplate, TemplateDifficulty } from '@/lib/templates';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { useCanvasSimulationStore } from '@/stores/canvasSimulationStore';
 
 interface TemplatePickerProps {
     open: boolean;
@@ -26,6 +27,8 @@ export default function TemplatePicker({ open, onClose }: TemplatePickerProps) {
         if (store.hasUnsavedWork()) {
             setConfirmingId(template.id);
         } else {
+            // Stop any running simulation before replacing the canvas
+            useCanvasSimulationStore.getState().reset();
             store.loadTemplate(template);
             setConfirmingId(null);
             onClose();
@@ -35,6 +38,8 @@ export default function TemplatePicker({ open, onClose }: TemplatePickerProps) {
     function confirmLoad(templateId: string) {
         const template = getTemplateById(templateId);
         if (!template) return;
+        // Stop any running simulation before replacing the canvas
+        useCanvasSimulationStore.getState().reset();
         useCanvasStore.getState().loadTemplate(template);
         setConfirmingId(null);
         onClose();
