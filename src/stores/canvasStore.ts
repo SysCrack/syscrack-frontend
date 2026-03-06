@@ -414,12 +414,7 @@ export const useCanvasStore = create<CanvasStore>()(
         },
 
         loadTemplate: (template) => {
-            // Step 1: stop any running simulation
-            // Import dynamically to avoid circular dependency
-            const { useCanvasSimulationStore } = require('@/stores/canvasSimulationStore');
-            useCanvasSimulationStore.getState().reset();
-
-            // Step 2: replace canvas
+            // Replace canvas with template topology
             set((s) => {
                 s.nodes = template.nodes as any;
                 s.connections = template.connections as any;
@@ -430,7 +425,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 s.isDirty = false;
             });
 
-            // Step 3: persist
+            // Persist updated canvas
             get().saveToLocalStorage();
         },
 
