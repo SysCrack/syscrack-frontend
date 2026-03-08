@@ -35,6 +35,7 @@ interface CanvasStore {
     connections: CanvasConnection[];
     selectedNodeIds: string[];
     selectedConnectionId: string | null;
+    internalsNodeId: string | null;
     viewport: Viewport;
     mode: InteractionMode;
     isDirty: boolean;
@@ -66,6 +67,7 @@ interface CanvasStore {
     selectConnection: (id: string) => void;
     clearSelection: () => void;
     selectAll: () => void;
+    setInternalsNodeId: (id: string | null) => void;
 
     // ── Viewport ──
     setViewport: (v: Partial<Viewport>) => void;
@@ -104,6 +106,7 @@ export const useCanvasStore = create<CanvasStore>()(
         connections: [],
         selectedNodeIds: [],
         selectedConnectionId: null,
+        internalsNodeId: null,
         viewport: { x: 0, y: 0, scale: 1 },
         mode: 'select',
         isDirty: false,
@@ -236,6 +239,7 @@ export const useCanvasStore = create<CanvasStore>()(
         selectNode: (id, multi = false) =>
             set((s) => {
                 s.selectedConnectionId = null;
+                s.internalsNodeId = null; // reset when selection changes
                 if (multi) {
                     const idx = s.selectedNodeIds.indexOf(id);
                     if (idx >= 0) {
@@ -258,12 +262,19 @@ export const useCanvasStore = create<CanvasStore>()(
             set((s) => {
                 s.selectedNodeIds = [];
                 s.selectedConnectionId = null;
+                s.internalsNodeId = null;
             }),
 
         selectAll: () =>
             set((s) => {
                 s.selectedNodeIds = s.nodes.map((n) => n.id);
                 s.selectedConnectionId = null;
+            }),
+
+        setInternalsNodeId: (id) =>
+            set((s) => {
+                if (id !== null && !s.selectedNodeIds.includes(id)) return;
+                s.internalsNodeId = id;
             }),
 
         // ── Viewport ──
@@ -378,6 +389,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 s.connections = [];
                 s.selectedNodeIds = [];
                 s.selectedConnectionId = null;
+                s.internalsNodeId = null;
                 s.viewport = { x: 0, y: 0, scale: 1 };
                 s.mode = 'select';
                 s.isDirty = false;

@@ -133,17 +133,36 @@ class CacheEntrySimulator {
         this.entries.clear();
     }
 
+    /** Remove a single key (UI-triggered eviction). */
+    evict(key: string): void {
+        this.entries.delete(key);
+    }
+
+    /** Clear all entries (UI Flush All); same as clear(). */
+    flush(): void {
+        this.entries.clear();
+    }
+
     getEntries(): CacheEntry[] {
         const evictKey = this.entries.size >= this.maxEntries ? this.pickEvictionCandidate() : null;
-        const entries = Array.from(this.entries.values()).map((e) => ({
-            key: e.key,
-            age: Math.max(0, this.simTick - e.insertedAt),
-            ttl: this.ttl,
-            accessCount: e.accessCount,
-            willEvict: evictKey === e.key,
-        }));
+        const entries = Array.from(this.entries.values()).map((e) => {
+            const age = Math.max(0, this.simTick - e.insertedAt);
+            const ageInSeconds = age / 60; // rough conversion for ttlRemaining
+            const ttlRemaining = this.ttl > 0 ? Math.max(0, this.ttl - ageInSeconds) : undefined;
+            return {
+                key: e.key,
+                age,
+                ttl: this.ttl,
+                accessCount: e.accessCount,
+                willEvict: evictKey === e.key,
+                hitCount: e.accessCount,
+                lastAccessedTick: e.lastAccessAt,
+                isEvictionCandidate: evictKey === e.key,
+                ttlRemaining,
+            };
+        });
         // Sort so eviction candidate appears first (visible in truncated list)
-        return entries.sort((a, b) => (a.willEvict ? 0 : 1) - (b.willEvict ? 0 : 1));
+        return entries.sort((a, b) => (a.isEvictionCandidate ? 0 : 1) - (b.isEvictionCandidate ? 0 : 1));
     }
 
     static keyFromPool(tick: number): string {
@@ -728,6 +747,32 @@ export class SimulationRunner {
     setLoadFactor(f: number) { this.loadFactor = Math.max(0.1, Math.min(5, f)); }
     setTraceOnlyMode(v: boolean) { this._traceOnlyMode = v; }
 
+    /** UI-triggered single-key eviction. */
+    evictCacheEntry(nodeId: string, key: string): void {
+        const sim = this.cacheSimulators.get(nodeId);
+        if (sim) sim.evict(key);
+    }
+
+    /** UI-triggered flush all entries for a cache node (mirrors chaos flush path). */
+    flushCache(nodeId: string): void {
+        const sim = this.cacheSimulators.get(nodeId);
+        if (sim) sim.flush();
+        const cacheModel = this.cacheModels.get(nodeId);
+        if (cacheModel) cacheModel.flush(this.tick);
+        this.cacheHits.set(nodeId, 0);
+        this.cacheMisses.set(nodeId, 0);
+    }
+
+    /** Return current cache entry count for a cache node (for tests / immediate post-flush check). */
+    getCacheEntryCount(nodeId: string): number {
+        return this.cacheSimulators.get(nodeId)?.getEntries()?.length ?? 0;
+    }
+
+    /** Return current cache entry keys for a cache node (for tests / immediate post-eviction check). */
+    getCacheEntryKeys(nodeId: string): string[] {
+        return this.cacheSimulators.get(nodeId)?.getEntries()?.map((e) => e.key) ?? [];
+    }
+
     get isRunning() { return this.running; }
 
     // ── Main loop (main thread uses RAF; worker uses setInterval and calls step(dt)) ──
@@ -891,7 +936,7 @@ export class SimulationRunner {
                     : totalConsumerCapacity;
             }
 
-            const processed = mqModel.dequeue(effectiveConsumerThroughput * (cappedDt / 1000), consumerGroupCount);
+            const processed = mqModel.dequeue(effectiveConsumerThroughput * (cappedDt / 1000), 1);
 
             // Accumulate fractional processed messages to emit whole particles
             let pendingEmit = this.mqProcessAccumulator.get(node.id) ?? 0;
@@ -1209,7 +1254,6 @@ export class SimulationRunner {
             if (hasCache && hasDb) {
                 const cacheConn = outConns.find((c) => this.nodeMap.get(c.targetId)?.type === 'cache')!;
                 const cacheNode = this.nodeMap.get(cacheConn.targetId)!;
-                const cacheHitRate = this.getCacheHitRate(cacheNode);
 
                 const dbConns = outConns.filter((c) => {
                     const t = this.nodeMap.get(c.targetId)?.type;
@@ -1226,17 +1270,10 @@ export class SimulationRunner {
                 }
 
                 if (rw === 'read') {
-                    const misses = Math.ceil(count * (1 - cacheHitRate));
                     if (traceId) {
                         this.addTraceEvent(traceId, { nodeId, nodeName: node.name, nodeType, action: `parallel cache routing`, timestamp: this.tick, method: parentParticle?.method, readWrite: rw });
                     }
                     if (count > 0) this.emitParticle(cacheConn, count, undefined, traceId, parentParticle, rw);
-                    if (misses > 0) {
-                        const missesPerDb = Math.ceil(misses / dbConns.length);
-                        for (const dbConn of dbConns) {
-                            this.emitParticle(dbConn, missesPerDb, undefined, traceId, parentParticle, rw);
-                        }
-                    }
                 } else {
                     const writeStrategy = (cacheNode.specificConfig as Record<string, unknown>)?.writeStrategy as string | undefined ?? 'write-around';
                     let parentEvtId: string | undefined;
@@ -1841,7 +1878,6 @@ export class SimulationRunner {
                 }
             }
 
-            this.nodeErrorCount.set(particle.targetId, (this.nodeErrorCount.get(particle.targetId) ?? 0) + particle.count);
             this.nodeRecentArrivals.set(particle.targetId, (this.nodeRecentArrivals.get(particle.targetId) ?? 0) + particle.count);
             this.nodeRequestCount.set(particle.targetId, (this.nodeRequestCount.get(particle.targetId) ?? 0) + particle.count);
 

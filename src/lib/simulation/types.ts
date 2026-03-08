@@ -73,7 +73,11 @@ export interface CacheEntry {
     age: number;       // seconds since inserted (simulated)
     ttl: number;       // configured TTL
     accessCount: number;
-    willEvict: boolean; // true if this is the eviction candidate
+    willEvict: boolean; // true if this is the eviction candidate (kept for backward compat)
+    hitCount: number;   // total hits since entry was cached (same as accessCount)
+    lastAccessedTick: number; // tick when last accessed
+    isEvictionCandidate: boolean; // true = LRU/LFU would evict this next (only 1-2 per cache)
+    ttlRemaining?: number; // seconds until TTL expiry, if applicable
 }
 
 export type CachePlacement = 'edge' | 'backend' | 'blob' | 'l2';

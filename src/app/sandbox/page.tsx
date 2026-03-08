@@ -146,9 +146,19 @@ function RightPanel({
     const traceHistory = useCanvasSimulationStore((s) => s.traceHistory);
     const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
     const selectedConnectionId = useCanvasStore((s) => s.selectedConnectionId);
+    const activeTemplateId = useCanvasStore((s) => s.activeTemplateId);
     const simActive = simStatus === 'running' || simStatus === 'paused' || simStatus === 'completed';
 
-    if (simActive && selectedNodeIds.length === 1) return <LiveComponentInspector nodeId={selectedNodeIds[0]} />;
+    const workloadHints = (() => {
+        const template = activeTemplateId ? getTemplateById(activeTemplateId) : null;
+        const arch = template?.workloadProfile?.archetypes?.find(
+            (a) => a.cacheKeyPattern && a.sampleData && a.sampleData.length > 0,
+        );
+        if (!arch) return undefined;
+        return { cacheKeyPattern: arch.cacheKeyPattern, sampleData: arch.sampleData };
+    })();
+
+    if (simActive && selectedNodeIds.length === 1) return <LiveComponentInspector nodeId={selectedNodeIds[0]} workloadHints={workloadHints} />;
     if (traceHistory.length > 0) return <RequestTracePanel collapsed={collapsed} onToggle={onToggle} />;
     if (simActive) return <SimulationResults collapsed={collapsed} onToggle={onToggle} />;
     if (selectedNodeIds.length === 1) return <ConfigSidebar />;
@@ -188,7 +198,7 @@ export default function SandboxPage() {
     }, []);
 
     return (
-        <div className="min-h-screen flex flex-col bg-[var(--color-canvas-bg)]">
+        <div className="h-screen flex flex-col overflow-hidden bg-[var(--color-canvas-bg)]">
             <TopNav />
             <main className="flex-1 flex flex-col overflow-hidden">
                 {/* Rationale banner (between toolbar and canvas) */}
@@ -202,7 +212,16 @@ export default function SandboxPage() {
 
                 <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
                     {/* Left — Component Palette */}
-                    <div style={{ flexShrink: 0 }}>
+                    <div
+                        style={{
+                            flexShrink: 0,
+                            minHeight: 0,
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
+                            display: 'flex',
+                            flexDirection: 'column',
+                        }}
+                    >
                         <ComponentPalette
                             collapsed={paletteCollapsed}
                             onToggle={() => setPaletteCollapsed((v) => !v)}
@@ -269,10 +288,20 @@ export default function SandboxPage() {
                     </div>
 
                     {/* Right — Config or Results panel */}
-                    <RightPanel
-                        collapsed={rightPanelCollapsed}
-                        onToggle={() => setRightPanelCollapsed((v) => !v)}
-                    />
+                    <div
+                        style={{
+                            minHeight: 0,
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
+                            display: 'flex',
+                            flexDirection: 'column',
+                        }}
+                    >
+                        <RightPanel
+                            collapsed={rightPanelCollapsed}
+                            onToggle={() => setRightPanelCollapsed((v) => !v)}
+                        />
+                    </div>
                 </div>
             </main>
 

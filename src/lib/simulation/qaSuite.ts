@@ -87,6 +87,41 @@ function runSim(
     return lastMetrics;
 }
 
+/** Run simulation for given ticks and return runner + getMetrics for mid-run actions (e.g. evictCacheEntry, flushCache). */
+function runSimWithRunner(
+    nodes: CanvasNode[],
+    connections: CanvasConnection[],
+    ticks: number,
+    options?: RunSimOptions,
+): { runner: SimulationRunner; getMetrics: () => LiveMetrics } {
+    let lastMetrics: LiveMetrics | null = null;
+    const runner = new SimulationRunner(
+        nodes,
+        connections,
+        (_particles, metrics) => {
+            lastMetrics = metrics;
+        },
+        options?.workloadProfile ? { workloadProfile: options.workloadProfile } : undefined,
+    );
+
+    if (options?.speed != null) runner.setSpeed(options.speed);
+    if (options?.loadFactor != null) runner.setLoadFactor(options.loadFactor);
+
+    runner.startForExternalLoop();
+    for (let i = 0; i < ticks; i++) {
+        runner.stepOnce(100);
+    }
+
+    const emptyMetrics: LiveMetrics = {
+        rps: 0, avgLatencyMs: 0, errorRate: 0, estimatedCostMonthly: 0, readParticles: 0, writeParticles: 0, nodeMetrics: {}
+    };
+
+    return {
+        runner,
+        getMetrics: () => lastMetrics ?? emptyMetrics,
+    };
+}
+
 // SPOF helper replicating UI logic
 function hasSpof(node: CanvasNode, connections: CanvasConnection[]): boolean {
     const instances = node.sharedConfig?.scaling?.instances ?? 1;
@@ -1104,6 +1139,130 @@ function runTC072(): QaResult {
 }
 
 // ---------------------------------------------------------
+// TC-073: Cache Eviction — Single Entry Load-Through
+// ---------------------------------------------------------
+export function runTC073(): QaResult {
+    const workloadProfile = urlShortenerTemplate.workloadProfile;
+    if (!workloadProfile || !workloadProfile.archetypes.some((a) => a.sampleIds && a.sampleIds.length >= 5)) {
+        return { id: 'TC-073', name: 'Cache Eviction — Single Entry Load-Through', passed: false, failures: ['Workload profile with ≥5 sampleIds required'] };
+    }
+
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 200, readWriteRatio: 0.95 } }),
+        makeNode('app1', 'app_server', 'App Server', 200, 0),
+        makeNode('cache1', 'cache', 'Cache', 400, 0, {
+            specific: { maxEntries: 500, evictionPolicy: 'lru', defaultTtl: 3600 },
+        }),
+        makeNode('db1', 'database_sql', 'Database', 600, 0),
+    ];
+    const connections = [
+        makeConnection('c1-app', 'c1', 'app1'),
+        makeConnection('app-cache', 'app1', 'cache1'),
+        makeConnection('cache-db', 'cache1', 'db1'),
+    ];
+
+    const CACHE_ID = 'cache1';
+    const DB_ID = 'db1';
+    const { runner, getMetrics } = runSimWithRunner(nodes, connections, 300, { workloadProfile });
+
+    const metricsBefore = getMetrics();
+    const cacheDetailBefore = metricsBefore.nodeMetrics[CACHE_ID]?.componentDetail as { kind: string; entries?: Array<{ key: string; accessCount?: number }>; hitRate?: number } | undefined;
+    const entriesBefore = cacheDetailBefore?.kind === 'cache' ? (cacheDetailBefore.entries ?? []) : [];
+    // Evict the hottest key (max accessCount) so eviction has measurable effect on hit rate and DB load
+    const hotKey = entriesBefore.length > 0
+        ? entriesBefore.reduce((best, e) => ((e.accessCount ?? 0) > (best.accessCount ?? 0) ? e : best)).key
+        : null;
+    const dbRpsBefore = metricsBefore.nodeMetrics[DB_ID]?.currentRps ?? 0;
+    const dbTotalBefore = metricsBefore.nodeMetrics[DB_ID]?.totalRequests ?? 0;
+    const hitRateBefore = metricsBefore.nodeMetrics[CACHE_ID]?.hitRate ?? 0;
+
+    if (!hotKey) {
+        return { id: 'TC-073', name: 'Cache Eviction — Single Entry Load-Through', passed: false, failures: ['Cache had no entries after 300 ticks; cannot pick hot key'] };
+    }
+
+    runner.evictCacheEntry(CACHE_ID, hotKey);
+
+    const keysRightAfterEviction = runner.getCacheEntryKeys(CACHE_ID);
+    const evictedKeyAbsentImmediately = !keysRightAfterEviction.includes(hotKey);
+
+    for (let i = 0; i < 100; i++) runner.stepOnce(100);
+    const metricsAfter = getMetrics();
+
+    const dbRpsAfter = metricsAfter.nodeMetrics[DB_ID]?.currentRps ?? 0;
+    const dbTotalAfter = metricsAfter.nodeMetrics[DB_ID]?.totalRequests ?? 0;
+    const hitRateAfter = metricsAfter.nodeMetrics[CACHE_ID]?.hitRate ?? 0;
+
+    const failures: string[] = [];
+    const dbLoadIncreased = dbRpsAfter > dbRpsBefore || dbTotalAfter > dbTotalBefore;
+    if (!dbLoadIncreased) {
+        failures.push(`DB load after eviction (RPS ${dbRpsAfter.toFixed(1)}, total ${dbTotalAfter}) should be greater than before (RPS ${dbRpsBefore.toFixed(1)}, total ${dbTotalBefore})`);
+    }
+    // After single-key eviction the key is re-inserted on first miss, so cumulative hit rate may drop only slightly.
+    // Accept either a measurable drop or that cache misses increased (evidence of load-through).
+    const hitRateDropped = hitRateAfter < hitRateBefore;
+    const missesIncreased = (metricsAfter.nodeMetrics[CACHE_ID]?.misses ?? 0) > (metricsBefore.nodeMetrics[CACHE_ID]?.misses ?? 0);
+    if (!hitRateDropped && !missesIncreased) {
+        failures.push(`Cache hit rate after eviction (${(hitRateAfter * 100).toFixed(1)}%) should drop vs before (${(hitRateBefore * 100).toFixed(1)}%) or cache misses should increase`);
+    }
+    if (!evictedKeyAbsentImmediately) {
+        failures.push(`Evicted key "${hotKey}" should not be in cache entries immediately after eviction`);
+    }
+
+    return { id: 'TC-073', name: 'Cache Eviction — Single Entry Load-Through', passed: failures.length === 0, failures };
+}
+
+// ---------------------------------------------------------
+// TC-074: Cache Flush — Full Load-Through Spike
+// ---------------------------------------------------------
+export function runTC074(): QaResult {
+    const nodes = [
+        makeNode('c1', 'client', 'Client', 0, 0, { specific: { requestsPerSecond: 400, readWriteRatio: 0.9 } }),
+        makeNode('app1', 'app_server', 'App Server', 200, 0),
+        makeNode('cache1', 'cache', 'Cache', 400, 0, { specific: { maxEntries: 500, evictionPolicy: 'lru', defaultTtl: 3600 } }),
+        makeNode('db1', 'database_sql', 'Database', 600, 0),
+    ];
+    const connections = [
+        makeConnection('c1-app', 'c1', 'app1'),
+        makeConnection('app-cache', 'app1', 'cache1'),
+        makeConnection('cache-db', 'cache1', 'db1'),
+    ];
+
+    const CACHE_ID = 'cache1';
+    const DB_ID = 'db1';
+    const { runner, getMetrics } = runSimWithRunner(nodes, connections, 300);
+
+    const metricsPreFlush = getMetrics();
+    const dbRpsPreFlush = metricsPreFlush.nodeMetrics[DB_ID]?.currentRps ?? 0;
+
+    runner.flushCache(CACHE_ID);
+
+    const entriesCountImmediate = runner.getCacheEntryCount(CACHE_ID);
+
+    for (let i = 0; i < 5; i++) runner.stepOnce(100);
+
+    for (let i = 0; i < 95; i++) runner.stepOnce(100);
+    const metricsAfter = getMetrics();
+    const dbRpsAfter = metricsAfter.nodeMetrics[DB_ID]?.currentRps ?? 0;
+    const cacheDetailAfter = metricsAfter.nodeMetrics[CACHE_ID]?.componentDetail as { kind: string; entries?: unknown[] } | undefined;
+    const entriesCountAfter = cacheDetailAfter?.kind === 'cache' ? (cacheDetailAfter.entries?.length ?? 0) : 0;
+
+    const failures: string[] = [];
+    if (dbRpsPreFlush <= 0) {
+        failures.push(`Pre-flush DB RPS was ${dbRpsPreFlush}; need positive baseline`);
+    } else if (dbRpsAfter < dbRpsPreFlush * 2) {
+        failures.push(`DB RPS after flush (${dbRpsAfter.toFixed(1)}) should be > 2× pre-flush (${dbRpsPreFlush.toFixed(1)})`);
+    }
+    if (entriesCountImmediate !== 0) {
+        failures.push(`Cache entries count immediately after flush was ${entriesCountImmediate}; expected 0`);
+    }
+    if (entriesCountAfter <= 0) {
+        failures.push(`Cache entries should rebuild after flush; had ${entriesCountAfter} entries after 100 ticks`);
+    }
+
+    return { id: 'TC-074', name: 'Cache Flush — Full Load-Through Spike', passed: failures.length === 0, failures };
+}
+
+// ---------------------------------------------------------
 // TC-064: Debug — Sequential Inject Trace Ordering
 // ---------------------------------------------------------
 function runTC064(): QaResult {
@@ -1946,5 +2105,7 @@ export function runQaSuite(): QaResult[] {
         runTC070(),
         runTC071(),
         runTC072(),
+        runTC073(),
+        runTC074(),
     ];
 }

@@ -8,6 +8,27 @@ import { useState, useCallback, useEffect } from 'react';
 import { COMPONENT_CATALOG, CATEGORIES, getCatalogByCategory } from '@/lib/data/componentCatalog';
 import type { ComponentCatalogEntry, ComponentCategory } from '@/lib/types/canvas';
 
+// Category border colors by component type (mirrors ComponentNode; kept local to avoid circular deps)
+const CATEGORY_BORDER_COLORS: Record<string, string> = {
+    client: '#06b6d4',
+    cdn: '#06b6d4',
+    load_balancer: '#8b5cf6',
+    api_gateway: '#8b5cf6',
+    dns: '#8b5cf6',
+    proxy: '#8b5cf6',
+    app_server: '#3b82f6',
+    serverless: '#3b82f6',
+    worker: '#3b82f6',
+    message_queue: '#f59e0b',
+    pub_sub: '#f59e0b',
+    cdc_connector: '#f59e0b',
+    database_sql: '#10b981',
+    database_nosql: '#10b981',
+    cache: '#10b981',
+    object_store: '#10b981',
+    default: '#475569',
+};
+
 interface ComponentPaletteProps {
     className?: string;
     collapsed?: boolean;
@@ -191,6 +212,10 @@ export default function ComponentPalette({ className, collapsed = false, onToggl
 function PaletteItem({ entry }: { entry: ComponentCatalogEntry }) {
     const isEnabled = entry.priority === 'p1';
     const [isDragging, setIsDragging] = useState(false);
+    const categoryColor = CATEGORY_BORDER_COLORS[entry.type] ?? CATEGORY_BORDER_COLORS.default;
+    const borderLeftDefault = `3px solid ${categoryColor}99`;
+    const borderLeftHover = `3px solid ${categoryColor}`;
+    const bgHover = `${categoryColor}0F`;
 
     const handleDragStart = useCallback(
         (e: React.DragEvent<HTMLDivElement>) => {
@@ -215,6 +240,8 @@ function PaletteItem({ entry }: { entry: ComponentCatalogEntry }) {
                 alignItems: 'center',
                 gap: 10,
                 padding: '8px 10px',
+                paddingLeft: 10,
+                borderLeft: borderLeftDefault,
                 background: isDragging ? '#1e3a5f' : '#181e2e',
                 border: '1px solid',
                 borderColor: isDragging ? '#3b82f6' : '#2a3244',
@@ -226,14 +253,18 @@ function PaletteItem({ entry }: { entry: ComponentCatalogEntry }) {
             }}
             onMouseEnter={(e) => {
                 if (isEnabled) {
-                    (e.currentTarget).style.borderColor = '#3b4a5f';
-                    (e.currentTarget).style.background = '#1e2638';
+                    const el = e.currentTarget;
+                    el.style.borderColor = '#3b4a5f';
+                    el.style.background = isDragging ? '#1e3a5f' : bgHover;
+                    el.style.borderLeft = borderLeftHover;
                 }
             }}
             onMouseLeave={(e) => {
                 if (!isDragging) {
-                    (e.currentTarget).style.borderColor = '#2a3244';
-                    (e.currentTarget).style.background = '#181e2e';
+                    const el = e.currentTarget;
+                    el.style.borderColor = '#2a3244';
+                    el.style.background = '#181e2e';
+                    el.style.borderLeft = borderLeftDefault;
                 }
             }}
         >

@@ -7,7 +7,7 @@
 'use client';
 
 import { Group, Line, Text, Circle } from 'react-konva';
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import type Konva from 'konva';
 import type { CanvasConnection, CanvasNode } from '@/lib/types/canvas';
 import type { RequestParticle } from '@/lib/simulation/SimulationRunner';
@@ -97,6 +97,18 @@ function particleRadius(count: number): number {
     return 6;
 }
 
+// Trail config (fade trail behind each particle)
+const TRAIL_LENGTH = 6;
+const TRAIL_OPACITY_START = 0.4;
+const TRAIL_OPACITY_END = 0;
+const TRAIL_SIZE_FACTOR = 0.6;
+const MIN_RADIUS_FOR_TRAIL = 3;
+
+// Directional pulse (dash animation)
+const PULSE_DASH = [4, 20] as [number, number];
+const PULSE_DASH_LENGTH = 24;
+const PULSE_SPEED_PX_PER_SEC = 60;
+
 // ============ Component ============
 
 export default function Connection({
@@ -112,6 +124,9 @@ export default function Connection({
     onHover,
 }: ConnectionProps) {
     const [isHovered, setIsHovered] = useState(false);
+    const [dashOffset, setDashOffset] = useState(0);
+    const trailRef = useRef<Map<string, Array<{ x: number; y: number }>>>(new Map());
+
     const baseColor = PROTOCOL_COLORS[connection.protocol] || PROTOCOL_COLORS.custom;
     const color = simActive
         ? (simHealthy ? '#22d3ee' : '#f87171')
@@ -139,6 +154,30 @@ export default function Connection({
         };
     }, [sourceNode.x, sourceNode.y, sourceNode.width, sourceNode.height, targetNode.x, targetNode.y, targetNode.width, targetNode.height]);
 
+    // Directional pulse: animate dash offset only when sim is active and tab is visible
+    useEffect(() => {
+        if (!simActive) return;
+        let rafId: number;
+        let lastTime = 0;
+        const animate = (time: number) => {
+            if (document.visibilityState !== 'visible') {
+                lastTime = 0;
+                rafId = requestAnimationFrame(animate);
+                return;
+            }
+            const deltaMs = lastTime ? time - lastTime : 0;
+            lastTime = time;
+            setDashOffset((prev) => {
+                let next = prev - (PULSE_SPEED_PX_PER_SEC * deltaMs) / 1000;
+                while (next < 0) next += PULSE_DASH_LENGTH;
+                return next;
+            });
+            rafId = requestAnimationFrame(animate);
+        };
+        rafId = requestAnimationFrame(animate);
+        return () => cancelAnimationFrame(rafId);
+    }, [simActive]);
+
     const handleClick = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
             e.cancelBubble = true;
@@ -157,6 +196,18 @@ export default function Connection({
 
     // Has live particles on this connection?
     const hasParticles = particles && particles.length > 0;
+
+    // Trail map cleanup: remove entries for particles that no longer exist (avoid unbounded memory)
+    const currentParticleIds = useMemo(
+        () => (particles ? new Set(particles.map((p) => p.id)) : new Set<string>()),
+        [particles],
+    );
+    const trailMap = trailRef.current;
+    if (hasParticles && currentParticleIds.size >= 0) {
+        for (const id of trailMap.keys()) {
+            if (!currentParticleIds.has(id)) trailMap.delete(id);
+        }
+    }
 
     return (
         <Group>
@@ -183,27 +234,74 @@ export default function Connection({
                 points={points}
                 bezier
                 stroke={isSelected ? '#60a5fa' : color}
-                strokeWidth={isSelected ? 2.5 : simActive ? 2 : isHovered ? 2 : 1.5}
-                opacity={simActive ? 0.9 : isHovered || isSelected ? 1 : 0.7}
+                strokeWidth={isSelected ? 2.5 : 2}
+                opacity={isSelected ? 1 : simActive ? 0.9 : isHovered ? 1 : 0.85}
                 dash={connection.protocol === 'websocket' ? [8, 4] : undefined}
                 listening={false}
             />
 
-            {/* Live request particles — positioned along the bezier by their t value */}
-            {hasParticles && particles!.map((p) => {
-                const pos = bezierPoint(points, Math.min(p.t, 0.99));
-                return (
-                    <Circle
-                        key={p.id}
-                        x={pos.x}
-                        y={pos.y}
-                        radius={particleRadius(p.count)}
-                        fill={p.color}
-                        opacity={0.9}
-                        listening={false}
-                    />
-                );
-            })}
+            {/* Directional pulse — dashed line animating source → target (only when sim active and visible) */}
+            {simActive && (
+                <Line
+                    points={points}
+                    bezier
+                    stroke="rgba(255, 255, 255, 0.28)"
+                    strokeWidth={1.5}
+                    opacity={0.35}
+                    dash={PULSE_DASH}
+                    dashOffset={dashOffset}
+                    listening={false}
+                />
+            )}
+
+            {/* Live request particles — with fade trail (trail drawn first so particle is on top) */}
+            {hasParticles &&
+                particles!.map((p) => {
+                    const pos = bezierPoint(points, Math.min(p.t, 0.99));
+                    const radius = particleRadius(p.count);
+                    const showTrail = radius >= MIN_RADIUS_FOR_TRAIL;
+
+                    if (showTrail) {
+                        let trail = trailMap.get(p.id);
+                        if (!trail) {
+                            trail = [];
+                            trailMap.set(p.id, trail);
+                        }
+                        trail.unshift({ x: pos.x, y: pos.y });
+                        if (trail.length > TRAIL_LENGTH) trail.pop();
+                    }
+
+                    return (
+                        <Group key={p.id}>
+                            {showTrail &&
+                                trailMap.get(p.id)?.map((tp, i) => {
+                                    const opacity =
+                                        TRAIL_OPACITY_START * (1 - i / TRAIL_LENGTH) + TRAIL_OPACITY_END * (i / TRAIL_LENGTH);
+                                    const trailRadius =
+                                        radius * TRAIL_SIZE_FACTOR * (1 - i / TRAIL_LENGTH);
+                                    return (
+                                        <Circle
+                                            key={`${p.id}-${i}`}
+                                            x={tp.x}
+                                            y={tp.y}
+                                            radius={Math.max(0.5, trailRadius)}
+                                            fill={p.color}
+                                            opacity={opacity}
+                                            listening={false}
+                                        />
+                                    );
+                                })}
+                            <Circle
+                                x={pos.x}
+                                y={pos.y}
+                                radius={radius}
+                                fill={p.color}
+                                opacity={0.9}
+                                listening={false}
+                            />
+                        </Group>
+                    );
+                })}
 
             {/* Protocol dot at midpoint (hidden during sim — particles replace it) */}
             {!simActive && (
