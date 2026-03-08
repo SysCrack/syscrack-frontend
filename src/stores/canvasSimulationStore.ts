@@ -38,6 +38,9 @@ interface CanvasSimulationStore {
     // Request filter: which particles to show (All / Reads / Writes)
     particleFilter: 'all' | 'reads' | 'writes';
 
+    // Cache eviction flash (highlight node on canvas for 1.5s after evict/flush)
+    flashNodeId: string | null;
+
     // Actions
     runSimulation: () => void;
     startDebugMode: () => void;
@@ -52,6 +55,8 @@ interface CanvasSimulationStore {
     setLoadFactor: (f: number) => void;
     setParticleFilter: (f: 'all' | 'reads' | 'writes') => void;
     updateRunningSimulationNodes: () => void;
+    evictCacheEntry: (nodeId: string, key: string) => void;
+    flushCache: (nodeId: string) => void;
 }
 
 export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get) => ({
@@ -69,6 +74,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
     _debugMode: false,
     traceHistory: [],
     particleFilter: 'all',
+    flashNodeId: null,
 
     runSimulation: () => {
         const { nodes, connections } = useCanvasStore.getState();
@@ -135,6 +141,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
                     _paused: false,
                     _debugMode: false,
                     traceHistory: [],
+                    flashNodeId: null,
                 });
             })
             .catch((err) => {
@@ -196,6 +203,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             _paused: true,
             _debugMode: true,
             traceHistory: [],
+            flashNodeId: null,
         });
     },
 
@@ -247,6 +255,7 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             _paused: false,
             _debugMode: false,
             traceHistory: [],
+            flashNodeId: null,
         });
     },
 
@@ -274,6 +283,22 @@ export const useCanvasSimulationStore = create<CanvasSimulationStore>((set, get)
             const { nodes } = useCanvasStore.getState();
             w.postMessage({ type: 'updateNodes', nodes });
         }
+    },
+
+    evictCacheEntry: (nodeId, key) => {
+        get()._worker?.postMessage({ type: 'evict-cache-entry', nodeId, key });
+        set({ flashNodeId: nodeId });
+        setTimeout(() => {
+            if (get().flashNodeId === nodeId) set({ flashNodeId: null });
+        }, 1500);
+    },
+
+    flushCache: (nodeId) => {
+        get()._worker?.postMessage({ type: 'flush-cache', nodeId });
+        set({ flashNodeId: nodeId });
+        setTimeout(() => {
+            if (get().flashNodeId === nodeId) set({ flashNodeId: null });
+        }, 1500);
     },
 }));
 

@@ -4,11 +4,18 @@
  */
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useNodeDetailMetrics } from '@/stores/canvasSimulationStore';
+import { useCanvasSimulationStore } from '@/stores/canvasSimulationStore';
 import { getCatalogEntry } from '@/lib/data/componentCatalog';
 import type { ComponentDetailData } from '@/lib/simulation/types';
-import { getTemplateById } from '@/lib/templates';
+import CacheEntriesList from './CacheEntriesList';
+import CacheInternals from './internals/CacheInternals';
+import MQInternals from './internals/MQInternals';
+import DBInternals from './internals/DBInternals';
+import LBInternals from './internals/LBInternals';
+import GenericInternals from './internals/GenericInternals';
 
 const font = 'Inter, system-ui, sans-serif';
 const panelWidth = 280;
@@ -58,7 +65,16 @@ function UtilizationBar({ value, label }: { value: number; label?: string }) {
 
 const PLACEMENT_LABELS: Record<string, string> = { edge: 'Edge', backend: 'Backend', blob: 'Blob', l2: 'L2' };
 
-function CacheDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'cache' }> }) {
+function CacheDetail({
+    nodeId,
+    d,
+    workloadHints,
+}: {
+    nodeId: string;
+    d: Extract<ComponentDetailData, { kind: 'cache' }>;
+    workloadHints?: { cacheKeyPattern?: string; sampleData?: { id: string; preview: string }[] };
+}) {
+    const entries = d.entries;
     return (
         <>
             <Section title="Config">
@@ -75,30 +91,15 @@ function CacheDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'cache' }>
                 <UtilizationBar value={d.hitRate} label="Hit rate" />
             </Section>
             <Section title="Cache entries">
-                <div style={{ fontSize: 10, color: '#64748b', marginBottom: 6 }}>
-                    {d.entries.length} / {d.maxEntries} (next evict marked)
-                </div>
-                {d.entries.slice(0, 12).map((e) => (
-                    <div
-                        key={e.key}
-                        style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            fontSize: 10,
-                            padding: '4px 6px',
-                            background: e.willEvict ? 'rgba(248, 113, 113, 0.15)' : '#1e293b',
-                            borderRadius: 4,
-                            borderLeft: e.willEvict ? '3px solid #f87171' : '3px solid transparent',
-                        }}
-                    >
-                        <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>{e.key}</span>
-                        <span style={{ color: '#94a3b8' }}>age {e.age} · {e.accessCount} acc</span>
-                    </div>
-                ))}
-                {d.entries.length > 12 && (
-                    <div style={{ fontSize: 10, color: '#64748b' }}>+{d.entries.length - 12} more</div>
-                )}
+                <CacheEntriesList
+                    nodeId={nodeId}
+                    entries={entries}
+                    maxEntries={d.maxEntries}
+                    hitRate={d.hitRate}
+                    evictionPolicy={d.evictionPolicy}
+                    workloadHints={workloadHints}
+                    showFlushAll={true}
+                />
             </Section>
         </>
     );
@@ -468,13 +469,17 @@ function CDCDetail({ d }: { d: Extract<ComponentDetailData, { kind: 'cdc_connect
 
 interface LiveComponentInspectorProps {
     nodeId: string;
+    workloadHints?: { cacheKeyPattern?: string; sampleData?: { id: string; preview: string }[] };
 }
 
-export default function LiveComponentInspector({ nodeId }: LiveComponentInspectorProps) {
+export default function LiveComponentInspector({ nodeId, workloadHints }: LiveComponentInspectorProps) {
     const nodes = useCanvasStore((s) => s.nodes);
+    const internalsNodeId = useCanvasStore((s) => s.internalsNodeId);
+    const setInternalsNodeId = useCanvasStore((s) => s.setInternalsNodeId);
     const clearSelection = useCanvasStore((s) => s.clearSelection);
     const detail = useNodeDetailMetrics(nodeId);
     const node = nodes.find((n) => n.id === nodeId);
+    const isInternalsMode = internalsNodeId === nodeId && internalsNodeId != null;
 
     if (!node) return null;
     const catalog = getCatalogEntry(node.type);
@@ -495,6 +500,38 @@ export default function LiveComponentInspector({ nodeId }: LiveComponentInspecto
                 overflowY: 'auto',
             }}
         >
+            {isInternalsMode && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <button
+                        type="button"
+                        onClick={() => setInternalsNodeId(null)}
+                        style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 12, padding: '2px 6px', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 4 }}
+                    >
+                        ← Back
+                    </button>
+                    <span style={{ fontSize: 11, color: '#475569' }}>{node.name} · Internals</span>
+                </div>
+            )}
+
+            {isInternalsMode ? (
+                <div style={{ padding: '12px 16px', overflowY: 'auto', flex: 1 }}>
+                    {!detail ? (
+                        <div style={{ padding: 24, textAlign: 'center', color: '#475569', fontSize: 12 }}>
+                            <div style={{ fontSize: 24, marginBottom: 8 }}>▶</div>
+                            Start the simulation to see internals
+                        </div>
+                    ) : (
+                        <>
+                            {node.type === 'cache' && <CacheInternals nodeId={nodeId} detail={detail.componentDetail?.kind === 'cache' ? detail.componentDetail : undefined} simState={detail} workloadHints={workloadHints} />}
+                            {node.type === 'message_queue' && <MQInternals nodeId={nodeId} detail={detail.componentDetail?.kind === 'message_queue' ? detail.componentDetail : undefined} simState={detail} />}
+                            {(node.type === 'database_sql' || node.type === 'database_nosql') && <DBInternals nodeId={nodeId} detail={node.type === 'database_sql' ? (detail.componentDetail?.kind === 'database_sql' ? detail.componentDetail : undefined) : (detail.componentDetail?.kind === 'database_nosql' ? detail.componentDetail : undefined)} simState={detail} />}
+                            {node.type === 'load_balancer' && <LBInternals nodeId={nodeId} detail={detail.componentDetail?.kind === 'load_balancer' ? detail.componentDetail : undefined} node={node} nodes={nodes} />}
+                            {!['cache', 'message_queue', 'database_sql', 'database_nosql', 'load_balancer'].includes(node.type) && <GenericInternals simState={detail} />}
+                        </>
+                    )}
+                </div>
+            ) : (
+            <>
             {/* Header */}
             <div style={{ padding: 12, borderBottom: '1px solid #2a3244' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
@@ -545,7 +582,7 @@ export default function LiveComponentInspector({ nodeId }: LiveComponentInspecto
             {/* Type-specific detail */}
             {detail?.componentDetail && (
                 <>
-                    {detail.componentDetail.kind === 'cache' && <CacheDetail d={detail.componentDetail} />}
+                    {detail.componentDetail.kind === 'cache' && <CacheDetail nodeId={nodeId} d={detail.componentDetail} workloadHints={workloadHints} />}
                     {detail.componentDetail.kind === 'cdn' && <CDNDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'load_balancer' && <LoadBalancerDetail d={detail.componentDetail} />}
                     {detail.componentDetail.kind === 'proxy' && <ProxyDetail d={detail.componentDetail} />}
@@ -581,6 +618,8 @@ export default function LiveComponentInspector({ nodeId }: LiveComponentInspecto
                 <Section title="Metrics">
                     <Row label="No type-specific data" value="—" />
                 </Section>
+            )}
+            </>
             )}
         </div>
     );

@@ -6,35 +6,69 @@
  */
 'use client';
 
-import { Group, Rect, Text, Circle } from 'react-konva';
-import { useRef, useState, useCallback } from 'react';
+import { Group, Rect, Text, Circle, Line } from 'react-konva';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import type Konva from 'konva';
 import type { CanvasNode, CanvasComponentType } from '@/lib/types/canvas';
 import { validateConnection, type TopologyWarning } from '@/lib/connectionRules';
 import type { NodeSimSummary } from '@/lib/simulation/types';
+import type { NodeDetailMetrics } from '@/lib/simulation/types';
 import { getCatalogEntry } from '@/lib/data/componentCatalog';
+
+// ============ Category border colors (by node.type) ============
+
+const CATEGORY_BORDER_COLORS: Record<string, string> = {
+    client: '#06b6d4',
+    cdn: '#06b6d4',
+    load_balancer: '#8b5cf6',
+    api_gateway: '#8b5cf6',
+    dns: '#8b5cf6',
+    proxy: '#8b5cf6',
+    app_server: '#3b82f6',
+    serverless: '#3b82f6',
+    worker: '#3b82f6',
+    message_queue: '#f59e0b',
+    pub_sub: '#f59e0b',
+    cdc_connector: '#f59e0b',
+    database_sql: '#10b981',
+    database_nosql: '#10b981',
+    cache: '#10b981',
+    object_store: '#10b981',
+    default: '#475569',
+};
+
+function latencyColor(ms: number | undefined): string {
+    if (ms == null) return '#94a3b8';
+    if (ms < 50) return '#22c55e';
+    if (ms < 200) return '#fbbf24';
+    return '#ef4444';
+}
 
 // ============ Colors ============
 
-const COLORS = {
-    traffic: { bg: '#1e2a3a', border: '#3b82f6', borderHover: '#60a5fa' },
-    compute: { bg: '#1e2b24', border: '#22c55e', borderHover: '#4ade80' },
-    storage: { bg: '#2a1e2e', border: '#a855f7', borderHover: '#c084fc' },
-    messaging: { bg: '#2a2a1e', border: '#eab308', borderHover: '#facc15' },
-    ai: { bg: '#1e2a2a', border: '#06b6d4', borderHover: '#22d3ee' },
-    techniques: { bg: '#2a2020', border: '#ef4444', borderHover: '#f87171' },
-} as const;
-
+const SELECTED_STROKE = '#60a5fa';
 const SELECTED_SHADOW_COLOR = '#3b82f6';
 const PORT_RADIUS = 5;
 const PORT_COLOR = '#475569';
 const PORT_HOVER_COLOR = '#94a3b8';
 
-// Health glow colors
+// Health glow colors (spec: green, amber, red)
 const HEALTH_COLORS = {
-    healthy: '#22c55e',   // green
-    warning: '#f59e0b',   // amber
-    critical: '#ef4444',  // red
+    healthy: '#22c55e',
+    warning: '#fbbf24',
+    critical: '#ef4444',
+} as const;
+
+const GLASS = {
+    bg: 'rgba(255, 255, 255, 0.06)',
+    border: 'rgba(255, 255, 255, 0.12)',
+    shadowColor: 'rgba(0, 0, 0, 0.4)',
+    headerBg: 'rgba(255, 255, 255, 0.04)',
+    headerBorderBottom: 'rgba(255, 255, 255, 0.08)',
+    iconContainerBg: 'rgba(255, 255, 255, 0.08)',
+    iconContainerBorder: 'rgba(255, 255, 255, 0.1)',
+    textPrimary: '#f1f5f9',
+    textSecondary: 'rgba(255, 255, 255, 0.45)',
 } as const;
 
 // ============ Props ============
@@ -59,6 +93,10 @@ interface ComponentNodeProps {
     onDiagnosticClick?: () => void;
     /** Topology warnings for this node (badge) */
     topologyWarnings?: TopologyWarning[];
+    /** Brief red border tint when cache eviction/flush fires (from store flashNodeId) */
+    flashEffect?: boolean;
+    /** Called when user double-clicks to open internals in right panel */
+    onEnterInternals?: (nodeId: string) => void;
 }
 
 // ============ Component ============
@@ -77,18 +115,54 @@ export default function ComponentNode({
     isSpof,
     onDiagnosticClick,
     topologyWarnings = [],
+    flashEffect = false,
+    onEnterInternals,
 }: ComponentNodeProps) {
     const groupRef = useRef<Konva.Group>(null);
     const [isHovered, setIsHovered] = useState(false);
     const [hoveredPort, setHoveredPort] = useState<string | null>(null);
 
     const catalog = getCatalogEntry(node.type);
-    const category = catalog?.category || 'compute';
-    const colors = COLORS[category as keyof typeof COLORS] || COLORS.compute;
     const icon = catalog?.icon || '❓';
 
     const { width, height } = node;
-    const cornerRadius = 10;
+    const cornerRadius = 14;
+
+    // Category-based border and glow (no health on border)
+    const categoryColor = CATEGORY_BORDER_COLORS[node.type] ?? CATEGORY_BORDER_COLORS.default;
+    const borderColor = isSelected ? SELECTED_STROKE : categoryColor;
+    const shadowColor = isSelected ? SELECTED_SHADOW_COLOR : categoryColor;
+    const shadowBlur = isSelected ? 28 : 16;
+    const shadowOpacity = isSelected ? 0.7 : 0.45;
+
+    // Health color for dot only (when sim active)
+    const healthDotColor = simState
+        ? !simState.isHealthy
+            ? HEALTH_COLORS.critical
+            : simState.avgCpuPercent > 60
+                ? HEALTH_COLORS.warning
+                : HEALTH_COLORS.healthy
+        : null;
+    const healthStatus: 'healthy' | 'warning' | 'critical' = simState
+        ? !simState.isHealthy
+            ? 'critical'
+            : simState.avgCpuPercent > 60
+                ? 'warning'
+                : 'healthy'
+        : 'healthy';
+
+    // Pulse opacity for health dot when warning/critical (cleanup on unmount)
+    const [pulseOpacity, setPulseOpacity] = useState(1);
+    useEffect(() => {
+        if (healthStatus !== 'warning' && healthStatus !== 'critical') return;
+        const interval = setInterval(() => {
+            setPulseOpacity((prev) => (prev === 1 ? 0.6 : 1));
+        }, 800);
+        return () => clearInterval(interval);
+    }, [healthStatus]);
+
+    // Header height (top ~40% of card)
+    const headerHeight = height * 0.4;
 
     // Port positions — one on each side
     const ports = [
@@ -97,31 +171,6 @@ export default function ComponentNode({
         { id: 'bottom', x: width / 2, y: height },
         { id: 'left', x: 0, y: height / 2 },
     ];
-
-    // Simulation-aware border color
-    let borderColor: string = isHovered ? colors.borderHover : colors.border;
-    let shadowColor: string | undefined = isSelected ? SELECTED_SHADOW_COLOR : undefined;
-    let shadowBlur = isSelected ? 12 : 0;
-    let shadowOpacity = isSelected ? 0.4 : 0;
-
-    if (simState && !isSelected) {
-        if (!simState.isHealthy) {
-            borderColor = HEALTH_COLORS.critical;
-            shadowColor = HEALTH_COLORS.critical;
-            shadowBlur = 14;
-            shadowOpacity = 0.5;
-        } else if (simState.avgCpuPercent > 60) {
-            borderColor = HEALTH_COLORS.warning;
-            shadowColor = HEALTH_COLORS.warning;
-            shadowBlur = 10;
-            shadowOpacity = 0.35;
-        } else {
-            borderColor = HEALTH_COLORS.healthy;
-            shadowColor = HEALTH_COLORS.healthy;
-            shadowBlur = 8;
-            shadowOpacity = 0.25;
-        }
-    }
 
     const handleClick = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -137,6 +186,24 @@ export default function ComponentNode({
             onSelect(node.id, false);
         },
         [node.id, onSelect],
+    );
+
+    const handleDblClick = useCallback(
+        (e: Konva.KonvaEventObject<MouseEvent>) => {
+            e.cancelBubble = true;
+            onSelect(node.id, false);
+            onEnterInternals?.(node.id);
+        },
+        [node.id, onSelect, onEnterInternals],
+    );
+
+    const handleDblTap = useCallback(
+        (e: Konva.KonvaEventObject<TouchEvent>) => {
+            e.cancelBubble = true;
+            onSelect(node.id, false);
+            onEnterInternals?.(node.id);
+        },
+        [node.id, onSelect, onEnterInternals],
     );
 
     const handleDragEnd = useCallback(
@@ -194,6 +261,14 @@ export default function ComponentNode({
                 : HEALTH_COLORS.healthy
         : HEALTH_COLORS.healthy;
 
+    const showMetricsFooter = !!(
+        simState &&
+        ((simState as NodeDetailMetrics)?.currentRps ?? 0) > 0
+    );
+    const footerHeight = 24;
+    const cpuBarY = showMetricsFooter ? height - footerHeight - 6 : height - 6;
+    const scalingBadgeY = showMetricsFooter ? height - footerHeight - 20 : height - 20;
+
     return (
         <Group
             ref={groupRef}
@@ -202,6 +277,8 @@ export default function ComponentNode({
             draggable
             onClick={handleClick}
             onTap={handleTap}
+            onDblClick={handleDblClick}
+            onDblTap={handleDblTap}
             onDragEnd={handleDragEnd}
             onMouseEnter={() => {
                 setIsHovered(true);
@@ -216,25 +293,89 @@ export default function ComponentNode({
                 }
             }}
         >
-            {/* Main body */}
+            {/* Main body — glassmorphism (must listen so Group receives click/drag) */}
             <Rect
                 width={width}
                 height={height}
-                fill={colors.bg}
-                stroke={isSelected ? SELECTED_SHADOW_COLOR : borderColor}
-                strokeWidth={isSelected ? 2.5 : simState ? 2 : isHovered ? 2 : 1.5}
+                fill={GLASS.bg}
+                stroke={borderColor}
+                strokeWidth={isSelected ? 2.5 : 2}
                 cornerRadius={cornerRadius}
                 shadowColor={shadowColor}
                 shadowBlur={shadowBlur}
                 shadowOpacity={shadowOpacity}
+                shadowOffset={{ x: 0, y: 0 }}
             />
-
+            {/* Eviction flash — red border tint when cache evict/flush fires */}
+            {flashEffect && (
+                <Rect
+                    x={0}
+                    y={0}
+                    width={width}
+                    height={height}
+                    fill="transparent"
+                    stroke="#ef4444"
+                    strokeWidth={3}
+                    cornerRadius={cornerRadius}
+                    listening={false}
+                />
+            )}
+            {/* Inset top highlight (no CSS backdrop-filter on canvas) */}
+            <Rect
+                x={1}
+                y={1}
+                width={width - 2}
+                height={1}
+                fill="rgba(255, 255, 255, 0.08)"
+                cornerRadius={[cornerRadius - 1, cornerRadius - 1, 0, 0]}
+                listening={false}
+            />
+            {/* Status bar — 2px top edge with category color when sim active */}
+            {simState && (
+                <Rect
+                    x={0}
+                    y={0}
+                    width={width}
+                    height={2}
+                    fill={categoryColor}
+                    cornerRadius={[cornerRadius, cornerRadius, 0, 0]}
+                    listening={false}
+                />
+            )}
+            {/* Header section (top ~40%) */}
+            <Rect
+                x={0}
+                y={0}
+                width={width}
+                height={headerHeight}
+                fill={GLASS.headerBg}
+                cornerRadius={[cornerRadius, cornerRadius, 0, 0]}
+                listening={false}
+            />
+            <Line
+                points={[0, headerHeight, width, headerHeight]}
+                stroke={GLASS.headerBorderBottom}
+                strokeWidth={1}
+                listening={false}
+            />
+            {/* Icon container — 4px padding, 20px icon */}
+            <Rect
+                x={8}
+                y={height / 2 - 14}
+                width={28}
+                height={28}
+                fill={GLASS.iconContainerBg}
+                stroke={GLASS.iconContainerBorder}
+                strokeWidth={1}
+                cornerRadius={8}
+                listening={false}
+            />
             {/* Icon */}
             <Text
                 text={icon}
                 x={12}
-                y={height / 2 - 12}
-                fontSize={22}
+                y={height / 2 - 10}
+                fontSize={20}
                 listening={false}
             />
 
@@ -242,11 +383,12 @@ export default function ComponentNode({
             <Text
                 text={node.name}
                 x={42}
-                y={16}
-                fontSize={13}
+                y={14}
+                fontSize={11}
                 fontFamily="Inter, system-ui, sans-serif"
                 fontStyle="600"
-                fill="#e2e8f0"
+                fill={GLASS.textPrimary}
+                lineHeight={1.2}
                 width={width - 54}
                 ellipsis
                 wrap="none"
@@ -257,26 +399,53 @@ export default function ComponentNode({
             <Text
                 text={catalog?.description?.split('—')[0]?.trim() || node.type}
                 x={42}
-                y={36}
-                fontSize={10}
+                y={27}
+                fontSize={9}
                 fontFamily="Inter, system-ui, sans-serif"
-                fill="#64748b"
+                fill={GLASS.textSecondary}
+                lineHeight={1.2}
                 width={width - 54}
                 ellipsis
                 wrap="none"
                 listening={false}
             />
 
-            {/* Scaling badge */}
+            {/* Health dot — top-right inside card, only when sim active */}
+            {simState && healthDotColor && (
+                <Circle
+                    x={width - 10}
+                    y={8}
+                    radius={5}
+                    fill={healthDotColor}
+                    opacity={healthStatus === 'warning' || healthStatus === 'critical' ? pulseOpacity : 1}
+                    shadowColor={healthDotColor}
+                    shadowBlur={10}
+                    shadowOpacity={0.8}
+                    listening={false}
+                />
+            )}
+
+            {/* Expand hint — bottom-right of card body, decorative */}
+            <Text
+                text="⊞"
+                x={width - 16}
+                y={height - (showMetricsFooter ? footerHeight + 14 : 14)}
+                fontSize={9}
+                fontFamily="Inter, system-ui, sans-serif"
+                fill="rgba(255,255,255,0.2)"
+                listening={false}
+            />
+            {/* Scaling badge — replica count with category color */}
             {node.sharedConfig.scaling && node.sharedConfig.scaling.instances > 1 && (
-                <Group x={width - 28} y={height - 22}>
+                <Group x={width - 28} y={scalingBadgeY}>
                     <Rect
                         width={20}
                         height={16}
-                        fill="#1e293b"
-                        stroke="#475569"
+                        fill={categoryColor + '26'}
+                        stroke={categoryColor + '66'}
                         strokeWidth={1}
                         cornerRadius={4}
+                        listening={false}
                     />
                     <Text
                         text={`×${node.sharedConfig.scaling.instances}`}
@@ -284,7 +453,7 @@ export default function ComponentNode({
                         y={2}
                         fontSize={10}
                         fontFamily="Inter, system-ui, sans-serif"
-                        fill="#94a3b8"
+                        fill={categoryColor}
                         listening={false}
                     />
                 </Group>
@@ -313,11 +482,11 @@ export default function ComponentNode({
 
             {/* ── Simulation Overlays ── */}
 
-            {/* SPOF badge — top-right (clickable if diagnostic available) */}
+            {/* SPOF badge — above card top edge */}
             {isSpof && (
                 <Group
                     x={width - 42}
-                    y={-8}
+                    y={-18}
                     onClick={onDiagnosticClick}
                     onTap={onDiagnosticClick}
                     style={{ cursor: onDiagnosticClick ? 'pointer' : 'default' }}
@@ -341,12 +510,12 @@ export default function ComponentNode({
                 </Group>
             )}
 
-            {/* Topology warning badge — top-right, below SPOF or alone */}
+            {/* Topology warning badge — above card, below SPOF or alone */}
             {topologyWarnings.length > 0 && (() => {
                 const hasCritical = topologyWarnings.some((w) => w.severity === 'critical');
                 const label = hasCritical ? 'CRITICAL' : 'WARNING';
                 const fill = hasCritical ? '#ef4444' : '#f59e0b';
-                const badgeY = isSpof ? 10 : -8;
+                const badgeY = isSpof ? -2 : -18;
                 return (
                     <Group x={width - 52} y={badgeY}>
                         <Rect width={52} height={16} fill={fill} cornerRadius={4} />
@@ -364,8 +533,8 @@ export default function ComponentNode({
                 );
             })()}
 
-            {/* Latency badge — bottom-center */}
-            {simState && (
+            {/* Latency badge — bottom-center (hidden when metrics footer is shown) */}
+            {simState && !showMetricsFooter && (
                 <Group x={width / 2 - 22} y={height + 4}>
                     <Rect
                         width={44}
@@ -389,13 +558,13 @@ export default function ComponentNode({
                 </Group>
             )}
 
-            {/* CPU utilization bar — thin bar at bottom of node */}
+            {/* CPU utilization bar — above metrics footer when present */}
             {simState && (
                 <>
                     {/* Background bar */}
                     <Rect
                         x={8}
-                        y={height - 6}
+                        y={cpuBarY}
                         width={width - 16}
                         height={3}
                         fill="#1e293b"
@@ -404,13 +573,67 @@ export default function ComponentNode({
                     {/* Fill bar */}
                     <Rect
                         x={8}
-                        y={height - 6}
+                        y={cpuBarY}
                         width={cpuBarWidth}
                         height={3}
                         fill={cpuBarColor}
                         cornerRadius={1}
                     />
                 </>
+            )}
+
+            {/* Metrics footer — RPS + Latency when sim active and currentRps > 0 */}
+            {showMetricsFooter && simState && (
+                <Group x={0} y={height - footerHeight}>
+                    <Rect
+                        width={width}
+                        height={footerHeight}
+                        fill="rgba(0, 0, 0, 0.25)"
+                        listening={false}
+                    />
+                    <Line
+                        points={[0, 0, width, 0]}
+                        stroke="rgba(255, 255, 255, 0.06)"
+                        strokeWidth={1}
+                        listening={false}
+                    />
+                    <Text
+                        text="RPS"
+                        x={10}
+                        y={4}
+                        fontSize={8}
+                        fontFamily="Inter, system-ui, sans-serif"
+                        fill="#94a3b8"
+                        listening={false}
+                    />
+                    <Text
+                        text={Math.round((simState as NodeDetailMetrics)?.currentRps ?? 0).toString()}
+                        x={28}
+                        y={4}
+                        fontSize={11}
+                        fontFamily="Inter, system-ui, sans-serif"
+                        fill="#f1f5f9"
+                        listening={false}
+                    />
+                    <Text
+                        text="LAT"
+                        x={width - 52}
+                        y={4}
+                        fontSize={8}
+                        fontFamily="Inter, system-ui, sans-serif"
+                        fill="#94a3b8"
+                        listening={false}
+                    />
+                    <Text
+                        text={simState.avgLatencyMs != null ? `${Math.round(simState.avgLatencyMs)}ms` : '—'}
+                        x={width - 38}
+                        y={4}
+                        fontSize={11}
+                        fontFamily="Inter, system-ui, sans-serif"
+                        fill={latencyColor(simState.avgLatencyMs)}
+                        listening={false}
+                    />
+                </Group>
             )}
 
             {/* Ports — visible on hover or when connecting */}

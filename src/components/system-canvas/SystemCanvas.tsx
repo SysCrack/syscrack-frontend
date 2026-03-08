@@ -20,6 +20,8 @@ import type { SimulationDiagnostic } from '@/lib/simulation/types';
 import { toast } from 'sonner';
 import { getTopologyWarnings, type TopologyWarning } from '@/lib/connectionRules';
 
+const METRICS_FOOTER_HEIGHT = 24;
+
 // ============ Props ============
 
 interface SystemCanvasProps {
@@ -50,6 +52,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     const particles = useCanvasSimulationStore((s) => s.particles);
     const particleFilter = useCanvasSimulationStore((s) => s.particleFilter);
     const liveMetrics = useCanvasSimulationStore((s) => s.liveMetrics);
+    const flashNodeId = useCanvasSimulationStore((s) => s.flashNodeId);
 
     // Sim is active when running, paused, or completed
     const simActive = (simStatus === 'running' || simStatus === 'paused' || simStatus === 'completed') && !!(currentResult || liveMetrics);
@@ -122,8 +125,17 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         if (!connectingFrom) setConnectionHoverMessage(null);
     }, [connectingFrom]);
 
+    // When sim is active, expand node height for metrics footer; use for nodeMap and rendering
+    const displayNodes = useMemo(
+        () =>
+            simActive
+                ? nodes.map((n) => ({ ...n, height: n.height + METRICS_FOOTER_HEIGHT }))
+                : nodes,
+        [nodes, simActive],
+    );
+
     // Node lookup for connections (needed for tooltip calculation)
-    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+    const nodeMap = new Map(displayNodes.map((n) => [n.id, n]));
 
     // Group particles by connection ID (filtered by read/write)
     const particlesByConnection = useMemo(() => {
@@ -258,6 +270,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                     break;
                 case 'Escape':
                     useCanvasStore.getState().cancelConnecting();
+                    useCanvasStore.getState().setInternalsNodeId(null);
                     useCanvasStore.getState().clearSelection();
                     break;
                 case 'a':
@@ -455,10 +468,11 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                 width: '100%',
                 height: '100%',
                 overflow: 'hidden',
-                background: '#121826',
+                background: '#080d14',
                 position: 'relative',
             }}
         >
+            <div style={{ position: 'relative', width: '100%', height: '100%' }}>
             {/* Dot grid — Excalidraw style */}
             <div
                 style={{
@@ -539,7 +553,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                     )}
 
                     {/* Nodes */}
-                    {nodes.map((node) => (
+                    {displayNodes.map((node) => (
                         <ComponentNode
                             key={node.id}
                             node={node}
@@ -555,6 +569,8 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                             isSpof={simActive ? spofSet.has(node.id) : false}
                             onDiagnosticClick={simActive && diagnosticsByNodeId.has(node.id) ? () => handleDiagnosticClick(node.id) : undefined}
                             topologyWarnings={topologyWarningsByNodeId.get(node.id) ?? []}
+                            flashEffect={node.id === flashNodeId}
+                            onEnterInternals={(id) => useCanvasStore.getState().setInternalsNodeId(id)}
                         />
                     ))}
                 </Layer>
@@ -669,6 +685,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                 }}
             >
                 {Math.round(viewport.scale * 100)}%
+            </div>
             </div>
         </div>
     );

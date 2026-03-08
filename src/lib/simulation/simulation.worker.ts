@@ -21,7 +21,9 @@ type InMessage =
     | { type: 'injectSequential'; count?: number; method?: RequestMethod; payloadSize?: PayloadSize; path?: string }
     | { type: 'setSpeed'; value: number }
     | { type: 'setLoadFactor'; value: number }
-    | { type: 'updateNodes'; nodes: CanvasNode[] };
+    | { type: 'updateNodes'; nodes: CanvasNode[] }
+    | { type: 'evict-cache-entry'; nodeId: string; key: string }
+    | { type: 'flush-cache'; nodeId: string };
 
 export type WorkerTickMessage = {
     type: 'tick';
@@ -127,6 +129,14 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
         case 'updateNodes': {
             lastNodes = msg.nodes;
             if (runner) runner.updateNodes(msg.nodes);
+            break;
+        }
+        case 'evict-cache-entry': {
+            if (runner) runner.evictCacheEntry(msg.nodeId, msg.key);
+            break;
+        }
+        case 'flush-cache': {
+            if (runner) runner.flushCache(msg.nodeId);
             break;
         }
         case 'step': {
