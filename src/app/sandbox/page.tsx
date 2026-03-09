@@ -13,6 +13,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import ConfigSidebar from '@/components/system-canvas/ConfigSidebar';
 import ConnectionConfigPanel from '@/components/system-canvas/ConnectionConfigPanel';
@@ -26,6 +27,11 @@ import { useCanvasSimulationStore } from '@/stores/canvasSimulationStore';
 import TemplatePicker from '@/components/templates/TemplatePicker';
 import RationaleBanner from '@/components/templates/RationaleBanner';
 import { getTemplateById } from '@/lib/templates';
+import { getDesignById } from '@/lib/api/designs';
+import { supabase } from '@/lib/supabase/client';
+import SaveButton from '@/components/canvas/SaveButton';
+import ShareButton from '@/components/canvas/ShareButton';
+import MyDesignsPanel from '@/components/canvas/MyDesignsPanel';
 
 // Only Konva components need dynamic import (they access `window`)
 const SystemCanvas = dynamic(
@@ -167,9 +173,14 @@ function RightPanel({
 }
 
 export default function SandboxPage() {
+    const searchParams = useSearchParams();
     const [paletteCollapsed, setPaletteCollapsed] = useState(false);
     const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
     const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+    const [myDesignsOpen, setMyDesignsOpen] = useState(false);
+    const [currentDesignId, setCurrentDesignId] = useState<string | null>(null);
+    const [shareUrl, setShareUrl] = useState<string | null>(null);
+    const [designName, setDesignName] = useState('');
     const activeTemplateId = useCanvasStore((s) => s.activeTemplateId);
     const templateBannerDismissed = useCanvasStore((s) => s.templateBannerDismissed);
     const activeTemplate = activeTemplateId ? getTemplateById(activeTemplateId) : null;
@@ -179,6 +190,30 @@ export default function SandboxPage() {
     useEffect(() => {
         useCanvasStore.getState().loadFromLocalStorage();
     }, []);
+
+    // Open design from URL (e.g. after fork redirect)
+    useEffect(() => {
+        const id = searchParams.get('designId');
+        if (!id) return;
+        supabase.auth.getUser().then((res: { data?: { user?: { id: string } | null } }) => {
+            if (!res.data?.user) return;
+            getDesignById(id)
+                .then((design) => {
+                    useCanvasStore.getState().loadDesignFull(
+                        design.nodes,
+                        design.connections,
+                        design.viewport,
+                        design.template,
+                    );
+                    setCurrentDesignId(design.id);
+                    setDesignName(design.metadata.name);
+                    setShareUrl(design.metadata.shareToken
+                        ? `${typeof window !== 'undefined' ? window.location.origin : ''}/design/share/${design.metadata.shareToken}`
+                        : null);
+                })
+                .catch(() => { /* ignore */ });
+        });
+    }, [searchParams]);
 
     // Auto-save indicator state
     const [lastSavedLabel, setLastSavedLabel] = useState<string>('');
@@ -265,6 +300,33 @@ export default function SandboxPage() {
                             >
                                 📋 Templates
                             </button>
+                            <SaveButton
+                                designId={currentDesignId}
+                                designName={designName}
+                                onSaved={setCurrentDesignId}
+                                onNameChange={setDesignName}
+                            />
+                            <ShareButton
+                                designId={currentDesignId}
+                                shareUrl={shareUrl}
+                                onShareUrl={setShareUrl}
+                            />
+                            <button
+                                onClick={() => setMyDesignsOpen(true)}
+                                style={{
+                                    padding: '5px 12px',
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    color: '#94a3b8',
+                                    background: 'rgba(30, 41, 59, 0.9)',
+                                    border: '1px solid #2a3244',
+                                    borderRadius: 6,
+                                    cursor: 'pointer',
+                                    backdropFilter: 'blur(8px)',
+                                }}
+                            >
+                                My Designs
+                            </button>
                             {lastSavedLabel && (
                                 <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'Inter, system-ui, sans-serif' }}>
                                     {lastSavedLabel}
@@ -307,6 +369,15 @@ export default function SandboxPage() {
 
             {/* Template Picker modal */}
             <TemplatePicker open={showTemplatePicker} onClose={() => setShowTemplatePicker(false)} />
+            <MyDesignsPanel
+                open={myDesignsOpen}
+                onClose={() => setMyDesignsOpen(false)}
+                onSelectDesign={(id, name, token) => {
+                    setCurrentDesignId(id);
+                    setDesignName(name);
+                    setShareUrl(token ? `${typeof window !== 'undefined' ? window.location.origin : ''}/design/share/${token}` : null);
+                }}
+            />
         </div>
     );
 }

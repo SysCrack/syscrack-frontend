@@ -87,6 +87,8 @@ interface CanvasStore {
     // ── Bulk ──
     deleteSelected: () => void;
     loadDesign: (nodes: CanvasNode[], connections: CanvasConnection[]) => void;
+    /** Load design and optionally restore viewport and template id */
+    loadDesignFull: (nodes: CanvasNode[], connections: CanvasConnection[], viewport?: Viewport, activeTemplateId?: string | null) => void;
     reset: () => void;
 
     // ── Templates & Persistence ──
@@ -381,6 +383,17 @@ export const useCanvasStore = create<CanvasStore>()(
                 s.selectedNodeIds = [];
                 s.selectedConnectionId = null;
                 s.isDirty = false;
+            }),
+
+        loadDesignFull: (nodes, connections, viewport, activeTemplateId) =>
+            set((s) => {
+                s.nodes = nodes;
+                s.connections = connections;
+                s.selectedNodeIds = [];
+                s.selectedConnectionId = null;
+                s.isDirty = false;
+                if (viewport) s.viewport = viewport;
+                if (activeTemplateId !== undefined) s.activeTemplateId = activeTemplateId;
             }),
 
         reset: () =>
