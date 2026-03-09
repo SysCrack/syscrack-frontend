@@ -26,11 +26,13 @@ const METRICS_FOOTER_HEIGHT = 24;
 
 interface SystemCanvasProps {
     className?: string;
+    /** When true, canvas is view-only (e.g. shared design link). No drag, connect, or edit. */
+    readOnly?: boolean;
 }
 
 // ============ Component ============
 
-export default function SystemCanvas({ className }: SystemCanvasProps) {
+export default function SystemCanvas({ className, readOnly = false }: SystemCanvasProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<Konva.Stage>(null);
     const [stageSize, setStageSize] = useState({ width: 800, height: 600 });
@@ -230,13 +232,14 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     }, [viewport]);
 
     useEffect(() => {
+        if (readOnly) return;
         const handler = (e: CustomEvent<{ clientX: number; clientY: number; componentType: string }>) => {
             const d = e.detail;
             processDropAt(d.clientX, d.clientY, d.componentType);
         };
         window.addEventListener('syscrack-palette-drop' as any, handler);
         return () => window.removeEventListener('syscrack-palette-drop' as any, handler);
-    }, [processDropAt]);
+    }, [processDropAt, readOnly]);
 
     // ── Resize observer ──
     useEffect(() => {
@@ -261,6 +264,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     useEffect(() => {
         function handleKeyDown(e: KeyboardEvent) {
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+            if (readOnly) return;
 
             switch (e.key) {
                 case 'Delete':
@@ -303,7 +307,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, []);
+    }, [readOnly]);
 
     // ── Wheel zoom ──
     const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -430,10 +434,11 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
     }, []);
 
     const handleNodeDragEnd = useCallback((id: string, x: number, y: number) => {
-        useCanvasStore.getState().moveNode(id, x, y);
-    }, []);
+        if (!readOnly) useCanvasStore.getState().moveNode(id, x, y);
+    }, [readOnly]);
 
     const handlePortClick = useCallback((nodeId: string) => {
+        if (readOnly) return;
         const state = useCanvasStore.getState();
         if (state.connectingFrom) {
             state.finishConnecting(nodeId);
@@ -449,7 +454,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
         } else {
             state.startConnecting(nodeId);
         }
-    }, []);
+    }, [readOnly]);
 
     const handleConnectionSelect = useCallback((id: string) => {
         useCanvasStore.getState().selectConnection(id);
@@ -571,6 +576,7 @@ export default function SystemCanvas({ className }: SystemCanvasProps) {
                             topologyWarnings={topologyWarningsByNodeId.get(node.id) ?? []}
                             flashEffect={node.id === flashNodeId}
                             onEnterInternals={(id) => useCanvasStore.getState().setInternalsNodeId(id)}
+                            readOnly={readOnly}
                         />
                     ))}
                 </Layer>

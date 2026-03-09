@@ -1,7 +1,9 @@
 import type { CanvasNode, CanvasConnection } from '@/lib/types/canvas';
+import { createConnection } from '@/lib/types/canvas';
 import { SimulationRunner, LiveMetrics } from './SimulationRunner';
 import type { RequestTrace } from './types';
 import type { WorkloadProfile } from '../templates/types';
+import { exportDesignJSON } from '@/lib/schemas/export';
 import { urlShortenerTemplate } from '../templates/definitions/urlShortener';
 import { COMPONENT_CATALOG, getCatalogEntry } from '@/lib/data/componentCatalog';
 import { DEFAULT_SHARED_CONFIG } from '@/lib/types/canvas';
@@ -2045,6 +2047,72 @@ function runTC051(): QaResult {
     return { id: 'TC-051', name: 'Schema Editor — Show on Canvas', passed: false, failures: ['BLOCKED: DB Modeling Lab not implemented (Phase 2b)'] };
 }
 
+// ── Design export (DeploymentDesign schema) ──
+function runExportDesignJSON(): QaResult {
+    const failures: string[] = [];
+
+    const nodes: CanvasNode[] = [
+        makeNode('n1', 'app_server', 'App', 0, 0),
+        makeNode('n2', 'cache', 'Cache', 100, 0),
+        makeNode('n3', 'database_sql', 'DB', 200, 0),
+    ];
+    const conns: CanvasConnection[] = [
+        createConnection('n1', 'n2', 'http'),
+        createConnection('n2', 'n3', 'tcp'),
+    ];
+
+    try {
+        const out = exportDesignJSON(nodes, conns, 'url-shortener', 'browse-heavy');
+        if (out.version !== '1.0') failures.push('Expected version 1.0');
+        if (out.template !== 'url-shortener') failures.push('Expected template url-shortener');
+        if (out.archetype !== 'browse-heavy') failures.push('Expected archetype browse-heavy');
+        const outNodes = out.nodes as unknown as Array<Record<string, unknown>>;
+        if (outNodes.some((n) => 'position' in n || n.x !== undefined || n.y !== undefined)) {
+            failures.push('DeploymentNode must not include position/x/y');
+        }
+        const idSet = new Set(out.nodes.map((n) => n.id));
+        for (const c of out.connections) {
+            if (!idSet.has(c.sourceId)) failures.push(`Connection references unknown node id: ${c.sourceId}`);
+            if (!idSet.has(c.targetId)) failures.push(`Connection references unknown node id: ${c.targetId}`);
+        }
+        if (out.nodes.length !== 3) failures.push('Expected 3 nodes');
+        if (out.connections.length !== 2) failures.push('Expected 2 connections');
+    } catch (e) {
+        failures.push(e instanceof Error ? e.message : String(e));
+    }
+
+    try {
+        exportDesignJSON(
+            [makeNode('a', 'app_server', 'App', 0, 0)],
+            [],
+            'url-shortener',
+            'browse-heavy',
+        );
+        failures.push('Should throw when no storage component');
+    } catch {
+        // expected
+    }
+
+    try {
+        exportDesignJSON(
+            nodes,
+            [{ id: 'c1', sourceId: 'n1', targetId: 'bad', protocol: 'http', bidirectional: false }],
+            'url-shortener',
+            'browse-heavy',
+        );
+        failures.push('Should throw when connection references unknown node id');
+    } catch {
+        // expected
+    }
+
+    return {
+        id: 'export-design-json',
+        name: 'exportDesignJSON — valid output and validation',
+        passed: failures.length === 0,
+        failures,
+    };
+}
+
 export function runQaSuite(): QaResult[] {
     return [
         // P1 Component Tests
@@ -2107,5 +2175,6 @@ export function runQaSuite(): QaResult[] {
         runTC072(),
         runTC073(),
         runTC074(),
+        runExportDesignJSON(),
     ];
 }

@@ -97,6 +97,8 @@ interface ComponentNodeProps {
     flashEffect?: boolean;
     /** Called when user double-clicks to open internals in right panel */
     onEnterInternals?: (nodeId: string) => void;
+    /** When true, node is not draggable and ports do not start/finish connection (view-only) */
+    readOnly?: boolean;
 }
 
 // ============ Component ============
@@ -117,6 +119,7 @@ export default function ComponentNode({
     topologyWarnings = [],
     flashEffect = false,
     onEnterInternals,
+    readOnly = false,
 }: ComponentNodeProps) {
     const groupRef = useRef<Konva.Group>(null);
     const [isHovered, setIsHovered] = useState(false);
@@ -238,17 +241,17 @@ export default function ComponentNode({
     const handlePortClick = useCallback(
         (e: Konva.KonvaEventObject<MouseEvent>) => {
             e.cancelBubble = true;
-            onPortClick(node.id);
+            if (!readOnly) onPortClick(node.id);
         },
-        [node.id, onPortClick],
+        [node.id, onPortClick, readOnly],
     );
 
     const handlePortTap = useCallback(
         (e: Konva.KonvaEventObject<TouchEvent>) => {
             e.cancelBubble = true;
-            onPortClick(node.id);
+            if (!readOnly) onPortClick(node.id);
         },
-        [node.id, onPortClick],
+        [node.id, onPortClick, readOnly],
     );
 
     // CPU utilization bar width (0–100% of node width minus padding)
@@ -274,7 +277,7 @@ export default function ComponentNode({
             ref={groupRef}
             x={node.x}
             y={node.y}
-            draggable
+            draggable={!readOnly}
             onClick={handleClick}
             onTap={handleTap}
             onDblClick={handleDblClick}
